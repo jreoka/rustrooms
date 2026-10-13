@@ -1285,13 +1285,8 @@
             await loadPreferences();
             try {
                 try {
-                    const constraints = { audio: true };
-                    if (!pendingCamToggle) {
-                        constraints.video = true;
-                    }
-                    const permStream = await navigator.mediaDevices.getUserMedia(constraints);
-                    permStream.getTracks().forEach(t => t.stop());
-                    if (isUnloading) return;
+                    // Skip initial blind permission probe that forces Bluetooth HFP handsfree telephony mode.
+                    // populateDeviceList + startPreview will request the proper media streams directly.
                 } catch (e) {
                     console.warn("Permission request failed", e);
                 }
