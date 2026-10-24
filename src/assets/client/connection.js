@@ -315,14 +315,13 @@
                                          if (msg.data) adoptServerProfile(msg.data);
                                          break;
                                      }
+                                     if (!msg.data) break;
                                      updatePeerTrackHints(msg.userId, msg.data);
-                                     if (msg.data) {
-                                         userAvatarCache[msg.userId] = {
-                                             avatar: msg.data.avatar,
-                                             isGif: msg.data.isGif,
-                                             staticFrame: msg.data.staticFrame
-                                         };
-                                     }
+                                     userAvatarCache[msg.userId] = {
+                                         avatar: msg.data.avatar,
+                                         isGif: msg.data.isGif,
+                                         staticFrame: msg.data.staticFrame
+                                     };
                                      if (msg.data.isLowBandwidthMode !== undefined) {
                                          peerLowBandwidthStatus[msg.userId] = msg.data.isLowBandwidthMode;
                                          updateAllSenderBitrates();
@@ -405,7 +404,7 @@
                                     } catch (e) { console.error("Error processing identify:", e); }
                                     break;
                                 case 'rename-channel':
-                                    if (roomId === msg.data.roomId && channelId === msg.data.oldName) {
+                                    if (msg.data && roomId === msg.data.roomId && channelId === msg.data.oldName) {
                                         performChannelSwitch(roomId, msg.data.newName);
                                     }
                                     break;
@@ -992,6 +991,7 @@
             // Clear layouts installed for the previous peer count; otherwise
             // an inline auto-fit template overrides the new utility classes.
             remoteGrid.style.gridTemplateColumns = '';
+            remoteGrid.style.justifyContent = '';
 
             if (count === 0) return;
 
@@ -2703,8 +2703,26 @@
             label.innerHTML = `<span class="flex items-center">${escapeHtml(userNickname)} (You)${statusIcons}</span>`;
         }
 
+        function fallbackCopyLink() {
+            const ta = document.createElement('textarea');
+            ta.value = window.location.href;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (e) { /* clipboard unavailable */ }
+            document.body.removeChild(ta);
+        }
+
         function copyLink() {
-            navigator.clipboard.writeText(window.location.href);
+            // The async clipboard API only exists in secure contexts; on a
+            // plain-http LAN address it is undefined and the old call threw,
+            // killing the "Copied!" feedback below.
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(window.location.href).catch(() => fallbackCopyLink());
+            } else {
+                fallbackCopyLink();
+            }
 
             const btn = document.getElementById('btnCopy');
             const otgBtn = document.getElementById('btnOnTheGoCopy');

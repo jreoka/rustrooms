@@ -1312,6 +1312,7 @@ pub(crate) async fn handle_socket(
                                 }
                             }
                         } else if let Some(ref target_id) = parsed.target
+                            && matches!(parsed.msg_type.as_str(), "signal" | "identify")
                             && text.len() <= MAX_DISTRIBUTED_DATA_LEN
                         {
                             let mut found = false;
