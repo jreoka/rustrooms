@@ -1,44 +1,47 @@
 /* ============================================================
- * Rust Rooms — Material Design 3 (dark, Google blue)
+ * Rust Rooms — flat dark UI (neutral zinc + one indigo accent)
  *
- * Flat tonal surfaces, no shadows/glows, clean lines.
- * Tokens mirror the M3 dark scheme; all components below are
- * built from them. Runtime-injected markup (JS) reuses the same
- * class names, so the whole app re-skins from this file.
+ * Restraint is the design: near-black neutral surfaces stepped
+ * by a few percent each, hairline borders instead of shadows,
+ * and a single indigo accent reserved for primary actions,
+ * focus, and live state. No gradients, no glass, no glows.
+ * All components below are built from these tokens, and
+ * runtime-injected markup (JS) reuses the same class names and
+ * legacy aliases, so the whole app re-skins from this file.
  * ============================================================ */
 
 :root {
     color-scheme: dark;
 
-    /* ---- M3 dark scheme (Google-blue primary) ---- */
-    --md-primary: #A8C7FA;
-    --md-on-primary: #0A305F;
-    --md-primary-container: #0F3F7A;
-    --md-on-primary-container: #D3E3FD;
-    --md-secondary: #B9C4D2;
-    --md-on-secondary: #252F3C;
-    --md-secondary-container: #3B4754;
-    --md-on-secondary-container: #D3DFEC;
-    --md-tertiary: #C9C8EA;
-    --md-on-tertiary: #32335F;
-    --md-tertiary-container: #494A77;
-    --md-on-tertiary-container: #E3E1FF;
-    --md-error: #F2B8B5;
-    --md-on-error: #601410;
-    --md-error-container: #8C1D18;
-    --md-on-error-container: #F9DEDC;
-    --md-surface: #101418;
-    --md-on-surface: #E2E2E8;
-    --md-on-surface-variant: #C3C9D0;
-    --md-surface-variant: #3F474F;
-    --md-on-surface-variant-hi: #E2E2E8;
-    --md-outline: #89919B;
-    --md-outline-variant: #3F474F;
-    --md-surface-container-lowest: #0B0F12;
-    --md-surface-container-low: #181C20;
-    --md-surface-container: #1C2025;
-    --md-surface-container-high: #262A30;
-    --md-surface-container-highest: #31353B;
+    /* ---- Core scheme ---- */
+    --md-primary: #5E6AD2;              /* the one accent */
+    --md-on-primary: #FFFFFF;
+    --md-primary-container: #2C3260;    /* tonal accent surface */
+    --md-on-primary-container: #C9CFF5;
+    --md-secondary: #A7AAB3;
+    --md-on-secondary: #1B1C20;
+    --md-secondary-container: #222329;  /* neutral control surface */
+    --md-on-secondary-container: #E3E4E8;
+    --md-tertiary: #A7AAB3;
+    --md-on-tertiary: #1B1C20;
+    --md-tertiary-container: #26272E;
+    --md-on-tertiary-container: #E3E4E8;
+    --md-error: #E5484D;
+    --md-on-error: #FFFFFF;
+    --md-error-container: #4C1D1F;
+    --md-on-error-container: #F5C6C8;
+    --md-surface: #0B0C0E;              /* app background */
+    --md-on-surface: #ECEEF1;
+    --md-on-surface-variant: #A7AAB3;
+    --md-surface-variant: #2C2D34;
+    --md-on-surface-variant-hi: #ECEEF1;
+    --md-outline: #3A3B43;              /* strong border */
+    --md-outline-variant: #222329;      /* hairline border */
+    --md-surface-container-lowest: #07080A;
+    --md-surface-container-low: #121316;   /* panels, sidebar, taskbar */
+    --md-surface-container: #17181C;       /* cards, tiles */
+    --md-surface-container-high: #1E1F24;  /* inputs, chips, rows */
+    --md-surface-container-highest: #26272E; /* hover / raised */
 
     /* ---- legacy aliases (kept so inline styles & JS keep working) ---- */
     --bg-primary: var(--md-surface);
@@ -59,27 +62,27 @@
     --text-muted: var(--md-on-surface-variant);
 
     --accent: var(--md-primary);
-    --accent-hover: #93B8F2;
+    --accent-hover: #7180DC;
     --accent-glow: transparent;
     --accent-blue: var(--md-primary);
     --accent-dark-blue: var(--md-primary-container);
 
-    --accent-green: #81C995;
-    --accent-green-hover: #6DAA7E;
+    --accent-green: #3BA55C;
+    --accent-green-hover: #359550;
     --accent-red: var(--md-error);
-    --accent-red-hover: var(--md-error);
+    --accent-red-hover: #D63A3F;
     --accent-dark-red: var(--md-error-container);
-    --accent-yellow: #FDD663;
+    --accent-yellow: #E3B341;
 
-    --success: #81C995;
-    --success-hover: #6DAA7E;
-    --success-active: #6DAA7E;
+    --success: #3BA55C;
+    --success-hover: #359550;
+    --success-active: #2E8B4A;
     --success-glow: transparent;
     --danger: var(--md-error);
-    --danger-hover: #E9A7A4;
-    --danger-active: #DF9A97;
+    --danger-hover: #D63A3F;
+    --danger-active: #C93A3E;
     --danger-glow: transparent;
-    --warning: #FDD663;
+    --warning: #E3B341;
     --warning-glow: transparent;
 
     /* Flat: every shadow token is explicitly nothing. */
@@ -88,11 +91,11 @@
     --shadow-lg: none;
     --shadow-xl: none;
 
-    /* ---- M3 shape scale ---- */
-    --radius-sm: 8px;    /* M3 small   */
-    --radius-md: 12px;   /* M3 medium  */
-    --radius-lg: 16px;   /* M3 large   */
-    --radius-xl: 28px;   /* M3 extra-large */
+    /* ---- Shape scale (one consistent ramp) ---- */
+    --radius-sm: 6px;    /* tags, badges, small chips */
+    --radius-md: 10px;   /* buttons, inputs, menus */
+    --radius-lg: 14px;   /* cards, video tiles */
+    --radius-xl: 20px;   /* panels, dialogs */
     --radius-pill: 9999px;
 
     --ease-out: cubic-bezier(0.2, 0, 0, 1);
@@ -118,6 +121,7 @@ body {
     background-color: var(--bg-primary);
     color: var(--text-primary);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.006em;
     overflow: hidden;
     position: fixed;
     inset: 0;
@@ -135,10 +139,10 @@ body {
 
 ::selection {
     background: var(--accent);
-    color: var(--md-on-primary);
+    color: #FFFFFF;
 }
 
-/* ---- scrollbars: quiet M3 ---- */
+/* ---- scrollbars: quiet, hairline ---- */
 * {
     scrollbar-width: thin;
     scrollbar-color: var(--md-outline-variant) transparent;
@@ -178,23 +182,23 @@ body {
 }
 
 /* ============================================================
- * Buttons — M3 filled / outlined / tonal / text
+ * Buttons — filled primary / outlined secondary
  * ============================================================ */
 .btn-primary {
     box-sizing: border-box;
     background: var(--accent);
     color: var(--md-on-primary);
     border: none;
-    border-radius: var(--radius-pill) !important;
-    height: 44px;
-    padding: 0 24px !important;
+    border-radius: var(--radius-md) !important;
+    height: 40px;
+    padding: 0 18px !important;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     font-size: 14px;
     font-weight: 500;
-    letter-spacing: 0.1px;
+    letter-spacing: 0;
     line-height: 1;
     text-transform: none;
     cursor: pointer;
@@ -203,12 +207,14 @@ body {
 }
 .btn-primary svg { flex-shrink: 0; }
 #btnStartRoom {
-    height: 56px;
-    padding: 0 48px !important;
-    font-size: 16px;
+    height: 50px;
+    padding: 0 36px !important;
+    font-size: 15px;
+    font-weight: 600;
+    border-radius: var(--radius-lg) !important;
 }
 .btn-primary:hover {
-    background: #93B8F2;
+    background: var(--accent-hover);
     filter: none;
 }
 .btn-primary:active {
@@ -226,37 +232,37 @@ body {
 }
 
 .btn-primary.btn-danger {
-    background: var(--md-error-container);
-    color: var(--md-on-error-container);
+    background: var(--md-error);
+    color: #FFFFFF;
 }
 .btn-primary.btn-danger:hover {
-    background: color-mix(in srgb, var(--md-error-container) 85%, white);
+    background: var(--danger-hover);
 }
 
 .btn-secondary {
     box-sizing: border-box;
     background: transparent;
     color: var(--md-on-surface);
-    border: 1px solid var(--md-outline);
-    border-radius: var(--radius-pill) !important;
-    height: 44px;
-    padding: 0 24px !important;
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--radius-md) !important;
+    height: 40px;
+    padding: 0 18px !important;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     font-size: 14px;
     font-weight: 500;
-    letter-spacing: 0.1px;
+    letter-spacing: 0;
     line-height: 1;
     text-transform: none;
     cursor: pointer;
-    transition: background 0.15s var(--ease-standard), transform 0.1s ease;
+    transition: background 0.15s var(--ease-standard), border-color 0.15s var(--ease-standard), transform 0.1s ease;
     -webkit-tap-highlight-color: transparent;
 }
 .btn-secondary:hover {
-    background: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
-    border-color: var(--md-on-surface-variant);
+    background: color-mix(in srgb, var(--md-on-surface) 6%, transparent);
+    border-color: var(--md-outline);
 }
 .btn-secondary:active,
 .btn-secondary.is-pressed {
@@ -290,16 +296,16 @@ body {
     background: var(--md-surface-container-highest);
 }
 
-/* M3 filled/outlined buttons inside dialogs */
+/* Filled/outlined buttons inside dialogs */
 .modal-content .btn-primary,
 .modal-content .btn-secondary {
     border: 1px solid var(--md-outline-variant) !important;
     border-radius: var(--radius-md) !important;
-    height: 44px;
-    padding: 0 24px;
+    height: 40px;
+    padding: 0 18px;
     font-size: 14px;
     font-weight: 500;
-    letter-spacing: 0.1px;
+    letter-spacing: 0;
 }
 .modal-content .btn-secondary {
     background: var(--md-surface-container-high) !important;
@@ -308,19 +314,20 @@ body {
 .modal-content .btn-primary {
     background: var(--md-primary) !important;
     color: var(--md-on-primary) !important;
+    border-color: transparent !important;
 }
 .modal-content .btn-primary.btn-danger {
-    background: var(--md-error-container) !important;
-    color: var(--md-on-error-container) !important;
+    background: var(--md-error) !important;
+    color: #FFFFFF !important;
 }
 .modal-content .btn-secondary:hover {
     background: var(--md-surface-container-highest) !important;
 }
 .modal-content .btn-primary:hover {
-    background: #93B8F2 !important;
+    background: var(--accent-hover) !important;
 }
 .modal-content .btn-primary.btn-danger:hover {
-    background: color-mix(in srgb, var(--md-error-container) 85%, white) !important;
+    background: var(--danger-hover) !important;
 }
 .modal-content .btn-primary:active,
 .modal-content .btn-secondary:active {
@@ -329,14 +336,14 @@ body {
 }
 
 /* ============================================================
- * Icon control buttons (taskbar etc.) — M3 circular icon buttons
+ * Icon control buttons (taskbar etc.) — circular, neutral
  * ============================================================ */
 .control-btn {
-    width: 56px;
-    height: 56px;
+    width: 52px;
+    height: 52px;
     padding: 0;
-    border-radius: 14px !important;
-    border: 1px solid var(--md-secondary-container);
+    border-radius: 50% !important;
+    border: 1px solid var(--md-outline-variant);
     background: var(--md-secondary-container);
     color: var(--md-on-secondary-container);
     display: inline-flex;
@@ -349,8 +356,8 @@ body {
     flex-shrink: 0;
 }
 .control-btn svg {
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
 }
 /* Touch devices (especially iOS Safari) keep the simulated :hover/:active
  * look stuck on the last tapped button until another element is tapped, and
@@ -396,7 +403,7 @@ body {
 }
 .control-btn.active-green {
     background: var(--success);
-    color: #062E12;
+    color: #FFFFFF;
     border-color: var(--success);
 }
 @media (hover: hover) and (pointer: fine) {
@@ -407,13 +414,13 @@ body {
 }
 
 /* ============================================================
- * Switches — M3
+ * Switches — compact pill, accent when on
  * ============================================================ */
 .switch-track {
-    width: 52px !important;
-    height: 32px !important;
+    width: 44px !important;
+    height: 24px !important;
     background: var(--md-surface-container-highest) !important;
-    border: 2px solid var(--md-outline) !important;
+    border: 1px solid var(--md-outline) !important;
     border-radius: var(--radius-pill) !important;
     position: relative !important;
     display: inline-block !important;
@@ -424,10 +431,10 @@ body {
     position: absolute !important;
     top: 2px !important;
     left: 2px !important;
-    width: 24px !important;
-    height: 24px !important;
+    width: 18px !important;
+    height: 18px !important;
     border-radius: 50% !important;
-    background: var(--md-outline) !important;
+    background: var(--md-on-surface-variant) !important;
     border: none !important;
     box-shadow: none !important;
     transition: transform 0.2s var(--ease-standard), background 0.2s var(--ease-standard) !important;
@@ -438,25 +445,25 @@ body {
 }
 .peer:checked ~ .switch-track::after {
     transform: translateX(20px) !important;
-    background: var(--md-on-primary) !important;
+    background: #FFFFFF !important;
     border: none !important;
 }
 
 /* ============================================================
- * Text fields & selects — M3 outlined
+ * Text fields & selects — quiet fill, hairline border
  * ============================================================ */
 input[type="text"],
 input[type="password"],
 select,
 textarea {
     background: var(--md-surface-container-high) !important;
-    border: 1px solid var(--md-outline) !important;
-    border-radius: 4px !important;
+    border: 1px solid var(--md-outline-variant) !important;
+    border-radius: var(--radius-md) !important;
     color: var(--md-on-surface) !important;
     font-size: 15px;
     font-family: inherit;
-    padding: 12px 16px !important;
-    height: 48px;
+    padding: 12px 14px !important;
+    height: 46px;
     box-sizing: border-box;
     transition: border-color 0.15s var(--ease-standard), background 0.15s var(--ease-standard);
     outline: none;
@@ -484,7 +491,7 @@ textarea {
     caret-color: var(--md-primary);
 }
 select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2389919B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23A7AAB3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
     padding-right: 44px !important;
@@ -495,7 +502,7 @@ select option {
 }
 
 /* ============================================================
- * Sliders — M3
+ * Sliders
  * ============================================================ */
 input[type=range] {
     -webkit-appearance: none;
@@ -541,10 +548,10 @@ input[type=range]::-moz-range-thumb {
  * ============================================================ */
 .label-text {
     color: var(--md-on-surface-variant);
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.5px;
-    text-transform: none;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
 }
 
 /* ============================================================
@@ -561,7 +568,7 @@ input[type=range]::-moz-range-thumb {
 .mic-bar {
     height: 100%;
     width: 0%;
-    background: var(--md-primary);
+    background: var(--success);
     border-radius: var(--radius-pill);
     transition: width 0.04s linear;
 }
@@ -572,22 +579,22 @@ input[type=range]::-moz-range-thumb {
 .app-topbar {
     background: var(--md-surface);
     border-bottom: 1px solid var(--md-outline-variant);
-    height: 64px;
+    height: 56px;
     padding: 0 16px !important;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
 }
 #currentChannelName {
     color: var(--md-on-surface);
-    font-size: 20px;
-    font-weight: 500;
-    letter-spacing: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     filter: none;
     text-shadow: none;
 }
 
 /* ============================================================
- * Taskbar — floating M3 pill (Google Meet style)
+ * Taskbar — full-width bar, hairline top border
  * ============================================================ */
 .taskbar {
     background: transparent;
@@ -605,8 +612,8 @@ input[type=range]::-moz-range-thumb {
     background: var(--md-surface-container-low);
     border-top: 1px solid var(--md-outline-variant);
     border-radius: 0;
-    padding: 12px 16px !important;
-    gap: 6px !important;
+    padding: 10px 16px !important;
+    gap: 8px !important;
 }
 .taskbar > div > .w-px {
     background: var(--md-outline-variant) !important;
@@ -614,19 +621,19 @@ input[type=range]::-moz-range-thumb {
 }
 
 /* Taskbar control buttons: fluid sizing so they never overflow on mobile.
- * Desktop keeps the M3 56px look; on narrow screens the buttons shrink
- * (down to 32px) and grow equally to fill the row, capped at 56px. */
+ * Desktop keeps the 52px look; on narrow screens the buttons shrink
+ * (down to 32px) and grow equally to fill the row, capped at 52px. */
 .taskbar > div > .control-btn {
     width: auto;
     height: auto;
     aspect-ratio: 1 / 1;
     flex: 1 1 44px;
     min-width: 32px;
-    max-width: 56px;
+    max-width: 52px;
 }
 .taskbar > div > .control-btn svg {
-    width: min(26px, 60%);
-    height: min(26px, 60%);
+    width: min(24px, 60%);
+    height: min(24px, 60%);
 }
 @media (max-width: 420px) {
     .taskbar > div {
@@ -730,7 +737,7 @@ input[type=range]::-moz-range-thumb {
 .copy-btn-copied {
     background: var(--success) !important;
     border-color: var(--success) !important;
-    color: #062E12;
+    color: #FFFFFF;
 }
 .copy-btn-copied:hover {
     background: var(--success-hover) !important;
@@ -742,7 +749,7 @@ input[type=range]::-moz-range-thumb {
  * ============================================================ */
 .video-container {
     position: relative;
-    background: var(--md-surface-container-low);
+    background: var(--md-surface-container-lowest);
     border: 1px solid var(--md-outline-variant);
     border-radius: var(--radius-lg);
     overflow: hidden;
@@ -778,7 +785,7 @@ input[type=range]::-moz-range-thumb {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--md-surface-container-low);
+    background: var(--md-surface-container-lowest);
     z-index: 10;
 }
 .avatar-img {
@@ -797,7 +804,7 @@ input[type=range]::-moz-range-thumb {
     position: relative;
     width: 112px;
     height: 112px;
-    border-radius: var(--radius-lg);
+    border-radius: 50%;
     overflow: hidden;
     border: 1px solid var(--md-outline-variant);
     background: var(--md-surface-container-high);
@@ -806,7 +813,7 @@ input[type=range]::-moz-range-thumb {
 .avatar-center:hover { border-color: var(--md-outline); }
 .avatar-center.avatar-empty {
     background: transparent;
-    border: 2px solid var(--md-outline-variant);
+    border: 1px solid var(--md-outline-variant);
 }
 .avatar-center img {
     -webkit-user-drag: none;
@@ -1003,7 +1010,7 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 /* ============================================================
- * Speaking indicator — crisp flat M3 ring (no glow)
+ * Speaking indicator — crisp flat accent ring (no glow)
  * ============================================================ */
 .speaking-glow {
     border-color: var(--md-primary) !important;
@@ -1057,7 +1064,7 @@ video.active + .avatar-layer { display: none !important; }
 .vol-row button.text-red-500:hover { color: var(--md-error) !important; }
 
 /* ============================================================
- * Sidebar — M3 navigation drawer
+ * Sidebar — navigation drawer
  * ============================================================ */
 #roomSidebar {
     position: fixed;
@@ -1084,8 +1091,8 @@ video.active + .avatar-layer { display: none !important; }
 
 .sidebar-header {
     box-sizing: border-box;
-    height: 64px;
-    padding: 0 20px;
+    height: 56px;
+    padding: 0 16px;
     border-bottom: 1px solid var(--md-outline-variant);
     display: flex;
     align-items: center;
@@ -1096,9 +1103,9 @@ video.active + .avatar-layer { display: none !important; }
 .sidebar-header h2 {
     margin: 0;
     color: var(--md-on-surface);
-    font-size: 22px;
-    font-weight: 400;
-    letter-spacing: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     line-height: 1.2;
 }
 .sidebar-header button {
@@ -1125,23 +1132,21 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 .room-item {
-    background: var(--md-surface-container-high);
+    background: var(--md-surface-container);
     border: 1px solid var(--md-outline-variant);
     border-radius: var(--radius-lg);
-    padding: 14px;
-    margin-bottom: 8px;
+    padding: 12px 14px;
+    margin-bottom: 6px;
     transition: background 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
     cursor: pointer;
 }
 .room-item:hover {
-    background: var(--md-surface-container-highest);
+    background: var(--md-surface-container-high);
     border-color: var(--md-outline);
 }
 .room-item.active {
     border-color: var(--md-primary);
-    background: color-mix(in srgb, var(--md-primary) 10%, var(--md-surface-container-high));
-    outline: 2px solid var(--md-primary);
-    outline-offset: -1px;
+    background: color-mix(in srgb, var(--md-primary) 12%, var(--md-surface-container));
 }
 
 .room-name {
@@ -1201,12 +1206,13 @@ video.active + .avatar-layer { display: none !important; }
     position: relative;
     width: 28px;
     height: 28px;
-    border-radius: var(--radius-sm);
+    border-radius: 50%;
     background: var(--md-surface-container-highest);
     border: 1px solid var(--md-outline-variant);
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
     transition: transform 0.15s ease;
 }
 .mini-avatar:hover { transform: scale(1.08); }
@@ -1214,7 +1220,7 @@ video.active + .avatar-layer { display: none !important; }
     width: 100%;
     height: 100%;
     object-fit: cover;
-    border-radius: var(--radius-sm);
+    border-radius: 50%;
 }
 .mini-avatar-placeholder {
     font-size: 11px;
@@ -1286,7 +1292,7 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 /* ============================================================
- * Dialogs — M3
+ * Dialogs
  * ============================================================ */
 .modal-overlay {
     position: fixed;
@@ -1310,12 +1316,12 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 .modal-content {
-    background: var(--md-surface-container-high);
+    background: var(--md-surface-container);
     border: 1px solid var(--md-outline-variant);
     border-radius: var(--radius-xl);
     width: 90%;
-    max-width: 420px;
-    padding: 28px 24px 20px;
+    max-width: 400px;
+    padding: 24px;
     opacity: 0;
     transform: scale(0.92) translateY(12px);
     transition: opacity 0.2s var(--ease-out), transform 0.35s var(--ease-out);
@@ -1332,9 +1338,9 @@ video.active + .avatar-layer { display: none !important; }
 .modal-content h3 {
     margin: 0 0 8px;
     color: var(--md-on-surface);
-    font-size: 22px;
-    font-weight: 400;
-    letter-spacing: 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
 }
 .modal-content p {
     margin: 0 0 20px;
@@ -1557,7 +1563,7 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 /* ============================================================
- * Welcome / landing screen — flat, Google-like
+ * Welcome / landing screen — flat, quiet
  * ============================================================ */
 #welcomeOverlay {
     background: var(--bg-primary);
@@ -1565,11 +1571,12 @@ video.active + .avatar-layer { display: none !important; }
 #welcomeOverlay::before { content: none; }
 
 .welcome-logo {
-    width: 72px;
-    height: 72px;
-    border-radius: 20px;
-    background: var(--md-primary);
-    color: var(--md-on-primary);
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+    background: var(--md-surface-container-high);
+    border: 1px solid var(--md-outline-variant);
+    color: var(--md-primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1734,7 +1741,7 @@ video.active + .avatar-layer { display: none !important; }
     #otgOrientationWarning { display: flex !important; }
 }
 
-/* Keep the existing height-based OTG compaction */
+/* Height-based OTG compaction */
 @media (max-height: 760px) {
     #onTheGoOverlay { padding: 1rem !important; gap-y: 1rem !important; }
     #onTheGoOverlay .mt-4 { margin-top: 0.5rem !important; }
@@ -1850,7 +1857,22 @@ video.active + .avatar-layer { display: none !important; }
     transition: opacity 0.2s ease-in;
 }
 
-/* Live Call chip (invite overlay) */
+/* Live Call chip (invite overlay) — the markup is built from Tailwind
+ * indigo utilities; pull it onto the single accent so the invite screen
+ * matches the rest of the UI. */
+#inviteWelcomeOverlay .bg-indigo-500\/10 {
+    background: color-mix(in srgb, var(--md-primary) 12%, transparent);
+}
+#inviteWelcomeOverlay .border-indigo-500\/20 {
+    border-color: color-mix(in srgb, var(--md-primary) 30%, transparent);
+}
+#inviteWelcomeOverlay .text-indigo-400 {
+    color: var(--accent-hover);
+}
+#inviteWelcomeOverlay .bg-indigo-400,
+#inviteWelcomeOverlay .bg-indigo-500 {
+    background: var(--md-primary);
+}
 .animate-ping { animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
 @keyframes ping {
     75%, 100% { transform: scale(2); opacity: 0; }
