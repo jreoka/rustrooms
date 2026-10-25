@@ -35,9 +35,15 @@ pub(crate) async fn process_redis_message(
 }
 
 pub(crate) fn is_valid_distributed_message(msg: &DistributedMessage) -> bool {
+    // Room-scoped admin messages carry no channel or user of their own.
+    let room_scoped = matches!(msg.msg_type.as_str(), "admin-update" | "knock-update");
+    let channel_ok = room_scoped
+        || msg.msg_type == "knock-response"
+        || normalize_channel_id(&msg.channel_id).as_deref() == Some(msg.channel_id.as_str());
+    let user_ok = room_scoped || Uuid::parse_str(&msg.user_id).is_ok();
     if !is_valid_room_id(&msg.room_id)
-        || normalize_channel_id(&msg.channel_id).as_deref() != Some(msg.channel_id.as_str())
-        || Uuid::parse_str(&msg.user_id).is_err()
+        || !channel_ok
+        || !user_ok
         || Uuid::parse_str(&msg.msg_id).is_err()
         || msg
             .data
@@ -350,6 +356,7 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
         if removed {
             state.channel_creation_times.lock().await.remove(&room_id);
             state.admin_rooms.lock().await.remove(&room_id);
+            crate::admin::delete_admin_redis(&state, &room_id).await;
             crate::admin::persist_state(&state).await;
             let mut generations = state.room_cleanup_generations.lock().await;
             if generations.get(&room_id).copied() == Some(generation) {
@@ -853,7 +860,11 @@ async fn apply_distributed_message(
                         .or_default()
                         .apply_public_state(data);
                 }
-                let text = crate::admin::signal_text("admin-update", None, Some(data.clone()));
+                let mut client_data = data.clone();
+                if let Some(obj) = client_data.as_object_mut() {
+                    obj.remove("keyHash");
+                }
+                let text = crate::admin::signal_text("admin-update", None, Some(client_data));
                 let rooms_lock = rooms.lock().await;
                 if let Some(room) = rooms_lock.get(&msg.room_id) {
                     for (_, channel) in room.iter() {
@@ -1243,6 +1254,8 @@ mod tests {
             distributed_msg_history: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             node_id: Uuid::new_v4().to_string(),
             admin_rooms: Arc::new(Mutex::new(HashMap::new())),
+admin_redis: None,
+redis_prefix: "rustrooms".to_string(),
             server_secret: Arc::new(vec![7u8; 32]),
         }
     }

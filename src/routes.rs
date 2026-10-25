@@ -287,6 +287,8 @@ mod tests {
             distributed_msg_history: Arc::new(tokio::sync::Mutex::new(VecDeque::new())),
             node_id: Uuid::new_v4().to_string(),
             admin_rooms: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+admin_redis: None,
+redis_prefix: "rustrooms".to_string(),
             server_secret: Arc::new(vec![7u8; 32]),
         }
     }

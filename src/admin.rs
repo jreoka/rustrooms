@@ -84,7 +84,7 @@ mod tests {
 // ---- Room admin messaging helpers (used by rooms.rs and distributed.rs) ----
 
 use crate::distributed::distributed_broadcast;
-use crate::state::{AppState, DistributedMessage, SignalMessage};
+use crate::state::{AppState, DistributedMessage, SignalMessage, RoomAdmin};
 use axum::extract::ws::Message;
 
 pub(crate) fn signal_text(msg_type: &str, user_id: Option<String>, data: Option<serde_json::Value>) -> String {
@@ -137,7 +137,15 @@ pub(crate) async fn broadcast_admin_update(state: &AppState, room_id: &str) {
             }
         }
     }
+    store_admin_redis(state, room_id).await;
     persist_state(state).await;
+    let mut dist_data = payload;
+    {
+        let lock = state.admin_rooms.lock().await;
+        if let Some(hash) = lock.get(room_id).and_then(|a| a.key_hash.clone()) {
+            dist_data["keyHash"] = serde_json::json!(hash);
+        }
+    }
     distributed_broadcast(
         state,
         &DistributedMessage {
@@ -147,7 +155,7 @@ pub(crate) async fn broadcast_admin_update(state: &AppState, room_id: &str) {
             user_id: String::new(),
             msg_id: Uuid::new_v4().to_string(),
             status: None,
-            data: Some(payload),
+            data: Some(dist_data),
             signal_msg: None,
         },
     )
@@ -223,6 +231,9 @@ pub(crate) fn load_persisted() -> Option<PersistedState> {
 // Atomic snapshot: write a temp file (0600, it carries the signing
 // secret) and rename it over the state file.
 pub(crate) async fn persist_state(state: &AppState) {
+    if state.admin_redis.is_some() {
+        return; // Redis is the shared store in distributed mode.
+    }
     let rooms = {
         let lock = state.admin_rooms.lock().await;
         lock.iter()
@@ -247,4 +258,132 @@ pub(crate) async fn persist_state(state: &AppState) {
         }
         let _ = tokio::fs::rename(&tmp, &path).await;
     }
+}
+
+// ---- Redis admin-state KV (distributed mode source of truth) ----
+//
+// The pub/sub bus syncs live changes, but a node that has never seen
+// a room (first join there, or a fresh node mid-call) needs the
+// current state on demand. It lives in one hash per room next to the
+// presence data: {prefix}:admin:{room_id}. Writes happen on every
+// admin change (the broadcast_admin_update choke point), reads on
+// the join gate, deletes on room expiry. A long TTL refreshed on
+// read/write bounds leaks from hard crashes; live nodes always hold
+// the state in memory and re-store it on the next change.
+
+use crate::state::RoomKind;
+use redis::AsyncCommands;
+
+const ADMIN_REDIS_TTL_SECS: i64 = 30 * 24 * 3600;
+
+fn admin_redis_key(state: &AppState, room_id: &str) -> String {
+    format!("{}:admin:{}", state.redis_prefix, room_id)
+}
+
+pub(crate) async fn store_admin_redis(state: &AppState, room_id: &str) {
+    let Some(template) = state.admin_redis.clone() else {
+        return;
+    };
+    let entry = {
+        let lock = state.admin_rooms.lock().await;
+        lock.get(room_id)
+            .filter(|a| a.is_meaningful())
+            .map(|a| a.to_persisted())
+    };
+    let mut conn = template;
+    let key = admin_redis_key(state, room_id);
+    match entry {
+        Some(p) => {
+            let mut fields: Vec<(String, String)> = vec![
+                ("creator_id".into(), p.creator_id.unwrap_or_default()),
+                (
+                    "admins".into(),
+                    serde_json::to_string(&p.admins).unwrap_or_default(),
+                ),
+                (
+                    "banned".into(),
+                    serde_json::to_string(&p.banned).unwrap_or_default(),
+                ),
+                ("lobby".into(), if p.lobby { "1".into() } else { "0".into() }),
+                (
+                    "kind".into(),
+                    match p.kind {
+                        RoomKind::Stage => "stage".into(),
+                        RoomKind::Regular => "regular".into(),
+                    },
+                ),
+                (
+                    "speakers".into(),
+                    serde_json::to_string(&p.speakers).unwrap_or_default(),
+                ),
+                (
+                    "forced".into(),
+                    serde_json::to_string(&p.forced).unwrap_or_default(),
+                ),
+            ];
+            if let Some(hash) = p.key_hash {
+                fields.push(("key_hash".into(), hash));
+            }
+            let _: redis::RedisResult<()> = conn.hset_multiple(&key, &fields).await;
+            let _: redis::RedisResult<()> = conn.expire(&key, ADMIN_REDIS_TTL_SECS).await;
+        }
+        None => {
+            let _: redis::RedisResult<()> = conn.del(&key).await;
+        }
+    }
+}
+
+// Materialize the shared state for a room into this node's memory.
+// No-op when the room is already known locally or Redis has nothing;
+// Redis failures degrade to today's node-local behavior, never to a
+// blocked join.
+pub(crate) async fn load_admin_redis(state: &AppState, room_id: &str) {
+    if state.admin_rooms.lock().await.contains_key(room_id) {
+        return;
+    }
+    let Some(template) = state.admin_redis.clone() else {
+        return;
+    };
+    let mut conn = template;
+    let key = admin_redis_key(state, room_id);
+    let map: std::collections::HashMap<String, String> =
+        conn.hgetall(&key).await.unwrap_or_default();
+    if map.is_empty() {
+        return;
+    }
+    let get = |k: &str| map.get(k).map(|v| v.as_str()).unwrap_or("");
+    let nonempty = |v: &str| {
+        if v.is_empty() {
+            None
+        } else {
+            Some(v.to_string())
+        }
+    };
+    let parse_set = |k: &str| serde_json::from_str(get(k)).unwrap_or_default();
+    let entry = RoomAdmin {
+        key_hash: nonempty(get("key_hash")),
+        creator_id: nonempty(get("creator_id")),
+        admins: parse_set("admins"),
+        banned: parse_set("banned"),
+        lobby: get("lobby") == "1",
+        kind: RoomKind::from_str(get("kind")),
+        speakers: parse_set("speakers"),
+        forced: serde_json::from_str(get("forced")).unwrap_or_default(),
+        pending: std::collections::HashMap::new(),
+        approved: std::collections::HashSet::new(),
+    };
+    state
+        .admin_rooms
+        .lock()
+        .await
+        .insert(room_id.to_string(), entry);
+    let _: redis::RedisResult<()> = conn.expire(&key, ADMIN_REDIS_TTL_SECS).await;
+}
+
+pub(crate) async fn delete_admin_redis(state: &AppState, room_id: &str) {
+    let Some(template) = state.admin_redis.clone() else {
+        return;
+    };
+    let mut conn = template;
+    let _: redis::RedisResult<()> = conn.del(admin_redis_key(state, room_id)).await;
 }

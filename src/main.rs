@@ -61,33 +61,87 @@ async fn main() {
     }
 
     let node_id = Uuid::new_v4().to_string();
+    let distributed_mode = !redis_urls.is_empty();
+
+    // Shared signing secret. With RUSTROOMS_SERVER_SECRET set to the
+    // same value on every node, creator keys verify cluster-wide; the
+    // value itself is never used directly, its SHA-256 is the secret.
+    let env_secret: Option<Vec<u8>> = std::env::var("RUSTROOMS_SERVER_SECRET")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            use sha2::Digest;
+            sha2::Sha256::digest(v.as_bytes()).to_vec()
+        });
+    if distributed_mode && env_secret.is_none() {
+        println!(
+            "ADMIN WARNING: distributed mode without RUSTROOMS_SERVER_SECRET; \
+             creator keys will only verify on the node that issued them"
+        );
+    }
+
+    // Direct Redis connection for admin-state loads at join time (the
+    // pub/sub bus has no request/response path).
+    let admin_redis = if distributed_mode {
+        match redis::Client::open(redis_urls[0].as_str()) {
+            Ok(client) => match client.get_multiplexed_async_connection().await {
+                Ok(conn) => Some(conn),
+                Err(e) => {
+                    eprintln!("ADMIN: Redis KV connection failed: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("ADMIN: Redis KV URL invalid: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let gen_secret = || -> Vec<u8> {
+        [
+            *Uuid::new_v4().as_bytes(),
+            *Uuid::new_v4().as_bytes(),
+        ]
+        .concat()
+    };
 
     // Restore persisted admin state (creator keys, admins, bans,
     // lobby/stage config) so restarts and rollouts don't strip it.
     // Restored rooms start empty, so arm the normal expiry cleanup:
     // if nobody rejoins within the grace period the entry is deleted
     // exactly as if the server had never stopped.
-    let (server_secret, admin_rooms, restored_room_ids) = match admin::load_persisted() {
-        Some(p) if p.secret.len() >= 16 => {
-            let map: HashMap<String, RoomAdmin> = p
-                .rooms
-                .into_iter()
-                .map(|(id, room)| (id, RoomAdmin::from(room)))
-                .collect();
-            let ids: Vec<String> = map.keys().cloned().collect();
-            (Arc::new(p.secret), Arc::new(Mutex::new(map)), ids)
-        }
-        _ => (
-            Arc::new(
-                [
-                    *Uuid::new_v4().as_bytes(),
-                    *Uuid::new_v4().as_bytes(),
-                ]
-                .concat(),
-            ),
+    let (server_secret, admin_rooms, restored_room_ids) = if distributed_mode {
+        // Redis is the shared source of truth; state materializes
+        // per room at join time, so there is nothing to restore.
+        (
+            Arc::new(env_secret.unwrap_or_else(gen_secret)),
             Arc::new(Mutex::new(HashMap::new())),
             Vec::new(),
-        ),
+        )
+    } else {
+        match admin::load_persisted() {
+            Some(p) if p.secret.len() >= 16 => {
+                let map: HashMap<String, RoomAdmin> = p
+                    .rooms
+                    .into_iter()
+                    .map(|(id, room)| (id, RoomAdmin::from(room)))
+                    .collect();
+                let ids: Vec<String> = map.keys().cloned().collect();
+                (
+                    Arc::new(env_secret.unwrap_or(p.secret)),
+                    Arc::new(Mutex::new(map)),
+                    ids,
+                )
+            }
+            _ => (
+                Arc::new(env_secret.unwrap_or_else(gen_secret)),
+                Arc::new(Mutex::new(HashMap::new())),
+                Vec::new(),
+            ),
+        }
     };
 
     let state = AppState {
@@ -103,6 +157,8 @@ async fn main() {
         distributed_msg_history: Arc::new(Mutex::new(VecDeque::new())),
         node_id,
         admin_rooms,
+        admin_redis,
+        redis_prefix: redis_prefix.clone(),
         server_secret,
     };
 

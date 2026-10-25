@@ -184,6 +184,13 @@ impl RoomAdmin {
     // that owns the room's admin actions. Key material, pending knocks
     // and approvals are node-local and never overwritten here.
     pub(crate) fn apply_public_state(&mut self, data: &serde_json::Value) {
+        // Adopt the issuing node's key hash once, so creator keys can
+        // be verified on every node (given a shared server secret).
+        if self.key_hash.is_none() {
+            if let Some(hash) = data.get("keyHash").and_then(|v| v.as_str()) {
+                self.key_hash = Some(hash.to_string());
+            }
+        }
         if let Some(creator) = data.get("creatorId").and_then(|v| v.as_str()) {
             self.creator_id = Some(creator.to_string());
         }
@@ -311,6 +318,11 @@ pub(crate) struct AppState {
     pub distributed_msg_history: Arc<Mutex<VecDeque<String>>>,
     pub(crate) node_id: String,
     pub(crate) admin_rooms: AdminMap,
+    // Direct Redis connection for admin-state KV in distributed mode
+    // (the pub/sub bus has no request/response path). None = single
+    // node, where the state file is the persistence layer instead.
+    pub(crate) admin_redis: Option<redis::aio::MultiplexedConnection>,
+    pub(crate) redis_prefix: String,
     // Random per boot; signs creator keys. Rooms are in-memory only,
     // so a restart invalidating every key matches room lifetime.
     pub(crate) server_secret: Arc<Vec<u8>>,
