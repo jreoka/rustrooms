@@ -46,13 +46,12 @@ pub(crate) async fn manifest_json() -> impl IntoResponse {
 
 pub(crate) async fn service_worker_js() -> impl IntoResponse {
     let sw = r##"
-const CACHE_NAME = 'rustrooms-m4-v1';
+const CACHE_NAME = 'rustrooms-m5-v1';
 const ASSETS = [
     '/icon.svg',
     '/rnnoise.js',
     '/rnnoise_processor.js',
-    '/assets/tailwind.js',
-    '/assets/tailwind-config.js',
+    '/assets/tailwind.min.css',
     '/assets/app.css',
     '/assets/app.js',
     '/assets/croppie.min.js',
@@ -142,18 +141,7 @@ macro_rules! asset_route {
     };
 }
 
-asset_route!(
-    tailwind_js,
-    "application/javascript",
-    "assets/tailwind.js",
-    str
-);
-asset_route!(
-    tailwind_config_js,
-    "application/javascript",
-    "assets/tailwind-config.js",
-    str
-);
+asset_route!(tailwind_css, "text/css", "assets/tailwind.min.css", str);
 asset_route!(app_css, "text/css", "assets/app.css", str);
 asset_route!(
     croppie_js,

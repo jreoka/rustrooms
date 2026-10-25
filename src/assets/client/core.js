@@ -412,7 +412,6 @@
 
         window.addEventListener('beforeunload', () => clearActiveTabSession(true));
         window.addEventListener('pagehide', () => clearActiveTabSession(true));
-        window.addEventListener('unload', () => clearActiveTabSession(true));
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 // If we are in the setup screen and not joined yet, 
