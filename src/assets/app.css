@@ -2019,6 +2019,8 @@ video.active + .avatar-layer { display: none !important; }
 .knock-btn.approve { background: var(--accent); border-color: var(--accent); color: #fff; }
 .knock-btn.approve:hover { background: var(--accent-hover); }
 .knock-btn.deny:hover { border-color: var(--danger); color: #f87171; }
+.knock-btn.block { color: #f87171; }
+.knock-btn.block:hover { border-color: var(--danger); }
 
 .knock-waiting {
     position: fixed;

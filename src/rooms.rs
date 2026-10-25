@@ -2182,8 +2182,9 @@ pub(crate) async fn handle_socket(
                                         }
                                     }
                                 }
-                                "knock-approve" | "knock-deny" => {
+                                "knock-approve" | "knock-deny" | "knock-block" => {
                                     let approve = action == "knock-approve";
+                                    let block = action == "knock-block";
                                     let pending_tx = {
                                         let mut lock = state.admin_rooms.lock().await;
                                         lock.get_mut(&room_id).and_then(|a| {
@@ -2191,9 +2192,29 @@ pub(crate) async fn handle_socket(
                                             if approve && removed.is_some() {
                                                 a.approved.insert(target.clone());
                                             }
+                                            if block && removed.is_some() {
+                                                // Blocking is a ban applied to a
+                                                // parked guest: the join path
+                                                // rejects banned identities before
+                                                // they can knock again.
+                                                a.banned.insert(target.clone());
+                                                a.approved.remove(&target);
+                                            }
                                             removed.map(|p| p.tx)
                                         })
                                     };
+                                    let was_local = pending_tx.is_some();
+                                    if block && was_local {
+                                        crate::admin::delete_resume_token(
+                                            &state, &room_id, &target,
+                                        )
+                                        .await;
+                                        state
+                                            .away_seats
+                                            .lock()
+                                            .await
+                                            .remove(&(room_id.clone(), target.clone()));
+                                    }
                                     match pending_tx {
                                         Some(ptx) => {
                                             if approve {
@@ -2228,7 +2249,8 @@ pub(crate) async fn handle_socket(
                                                     msg_id: Uuid::new_v4().to_string(),
                                                     status: None,
                                                     data: Some(serde_json::json!({
-                                                        "approve": approve
+                                                        "approve": approve,
+                                                        "block": block
                                                     })),
                                                     signal_msg: None,
                                                 },
@@ -2237,6 +2259,12 @@ pub(crate) async fn handle_socket(
                                         }
                                     }
                                     crate::admin::send_knock_update(&state, &room_id).await;
+                                    if block && was_local {
+                                        crate::admin::broadcast_admin_update(
+                                            &state, &room_id,
+                                        )
+                                        .await;
+                                    }
                                 }
                                 _ => {}
                             }

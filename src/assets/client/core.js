@@ -3332,11 +3332,19 @@
                     </div>
                     <button class="knock-btn approve" onclick="respondKnock('${k.id}', true)">Let in</button>
                     <button class="knock-btn deny" onclick="respondKnock('${k.id}', false)">Deny</button>
+                    <button class="knock-btn block" onclick="respondKnockBlock('${k.id}')">Block</button>
                 </div>`).join('');
         }
 
         function respondKnock(userId, approve) {
             sendAdminAction(approve ? 'knock-approve' : 'knock-deny', userId);
+            pendingKnocks = pendingKnocks.filter(k => k.id !== userId);
+            renderKnocks();
+        }
+
+        function respondKnockBlock(userId) {
+            // Deny this knock and ban the identity, so it cannot knock again.
+            sendAdminAction('knock-block', userId);
             pendingKnocks = pendingKnocks.filter(k => k.id !== userId);
             renderKnocks();
         }

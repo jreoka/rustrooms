@@ -935,12 +935,22 @@ async fn apply_distributed_message(
                 .and_then(|d| d.get("approve"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let block = msg
+                .data
+                .as_ref()
+                .and_then(|d| d.get("block"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let pending_tx = {
                 let mut lock = state.admin_rooms.lock().await;
                 lock.get_mut(&msg.room_id).and_then(|a| {
                     let removed = a.pending.remove(&msg.user_id);
                     if approve && removed.is_some() {
                         a.approved.insert(msg.user_id.clone());
+                    }
+                    if block && removed.is_some() {
+                        a.banned.insert(msg.user_id.clone());
+                        a.approved.remove(&msg.user_id);
                     }
                     removed.map(|p| p.tx)
                 })
@@ -955,6 +965,16 @@ async fn apply_distributed_message(
                     let _ = ptx.try_send(Ok(Message::Close(None)));
                 }
                 crate::admin::send_knock_update(state, &msg.room_id).await;
+                if block {
+                    crate::admin::delete_resume_token(state, &msg.room_id, &msg.user_id)
+                        .await;
+                    state
+                        .away_seats
+                        .lock()
+                        .await
+                        .remove(&(msg.room_id.clone(), msg.user_id.clone()));
+                    crate::admin::broadcast_admin_update(state, &msg.room_id).await;
+                }
             }
         }
         "signal" => {
