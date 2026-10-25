@@ -2004,3 +2004,40 @@ video.active + .avatar-layer { display: none !important; }
 @keyframes ping {
     75%, 100% { transform: scale(2); opacity: 0; }
 }
+
+/* Animated accent: a slow violet-blue drift across solid accent
+   surfaces (primary buttons, the landing logo badge, the settings
+   toggle when on). Kept deliberately slow and low-contrast so it
+   reads as a subtle swirl rather than a rainbow. */
+:root {
+    --accent-grad: linear-gradient(115deg, #575EEA, #7A54E8, #4F7BEA, #575EEA);
+}
+
+@keyframes accent-flow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.btn-primary,
+.welcome-logo,
+.participant-count,
+.switch input:checked + .slider {
+    background-image: var(--accent-grad);
+    background-size: 220% 220%;
+    animation: accent-flow 10s ease-in-out infinite;
+}
+
+/* The flat hover shorthand would otherwise wipe the gradient. */
+.btn-primary:hover {
+    background-image: var(--accent-grad);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn-primary,
+    .welcome-logo,
+    .participant-count,
+    .switch input:checked + .slider {
+        animation: none;
+    }
+}
