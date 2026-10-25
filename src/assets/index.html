@@ -125,7 +125,10 @@
             </div>
 
             <div id="recentCalls" class="w-full max-w-xs mx-auto" style="display: none;">
-                <div class="label-text" style="margin-bottom: 8px;">Recent calls</div>
+                <div class="flex items-center justify-between" style="margin-bottom: 8px;">
+                    <div class="label-text">Recent calls</div>
+                    <button type="button" class="recent-calls-clear" onclick="clearRecentCalls()">Clear all</button>
+                </div>
                 <div id="recentCallsList" class="flex flex-col gap-2"></div>
             </div>
         </div>
@@ -538,9 +541,9 @@
                  <div class="w-full h-full relative flex flex-col">
                     <div id="localAvatarLayer" class="absolute inset-0 z-20 flex items-center justify-center" style="display: none; background: var(--bg-secondary);">
                         <img id="localAvatarImg" src="" class="absolute inset-0 w-full h-full object-cover blur-xl opacity-30 hidden" draggable="false">
-                        <div class="relative w-14 h-14 md:w-20 md:h-20 rounded-lg flex items-center justify-center overflow-hidden z-10" style="background: var(--bg-secondary); border: 2px solid var(--border-subtle);">
+                        <div class="relative w-12 h-12 md:w-14 md:h-14 rounded-full flex items-center justify-center overflow-hidden z-10" style="background: var(--bg-tertiary); border: 1px solid var(--border-subtle);">
                              <img id="localAvatarCenterImg" src="" class="w-full h-full object-cover hidden" draggable="false">
-                             <div id="localAvatarPlaceholder" class="flex items-center justify-center w-full h-full" style="color: var(--text-muted); line-height: 1;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-7 h-7 md:w-9 md:h-9"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg></div>
+                             <div id="localAvatarPlaceholder" class="flex items-center justify-center w-full h-full" style="color: var(--text-muted); line-height: 1;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6 md:w-7 md:h-7"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg></div>
                         </div>
                     </div>
 

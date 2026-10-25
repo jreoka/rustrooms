@@ -1737,6 +1737,16 @@ video.active + .avatar-layer { display: none !important; }
     transition: color 0.15s ease;
 }
 .recent-call-remove:hover { color: var(--md-error); }
+.recent-calls-clear {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    color: var(--md-on-surface-variant);
+    cursor: pointer;
+    transition: color 0.15s ease;
+}
+.recent-calls-clear:hover { color: var(--md-error); }
 
 /* ============================================================
  * Config / settings / invite / crop panels

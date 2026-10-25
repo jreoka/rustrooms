@@ -3215,6 +3215,11 @@
             saveRecentCalls(list);
         }
 
+        function clearRecentCalls() {
+            try { localStorage.removeItem(RECENT_CALLS_KEY); } catch (e) {}
+            renderRecentCalls();
+        }
+
         function removeRecentCall(room, channel) {
             saveRecentCalls(loadRecentCalls().filter(e => !(e.room === room && e.channel === channel)));
             renderRecentCalls();
