@@ -137,6 +137,7 @@ pub(crate) async fn broadcast_admin_update(state: &AppState, room_id: &str) {
             }
         }
     }
+    persist_state(state).await;
     distributed_broadcast(
         state,
         &DistributedMessage {
@@ -198,4 +199,52 @@ pub(crate) async fn send_knock_update(state: &AppState, room_id: &str) {
         },
     )
     .await;
+}
+
+// ---- Persistence (restarts / rollouts keep admin state) ----
+
+use crate::state::PersistedState;
+use std::path::PathBuf;
+
+pub(crate) fn state_file_path() -> PathBuf {
+    std::env::var("RUSTROOMS_STATE_FILE")
+        .ok()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("rustrooms_state.json"))
+}
+
+pub(crate) fn load_persisted() -> Option<PersistedState> {
+    let raw = std::fs::read_to_string(state_file_path()).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+// Atomic snapshot: write a temp file (0600, it carries the signing
+// secret) and rename it over the state file.
+pub(crate) async fn persist_state(state: &AppState) {
+    let rooms = {
+        let lock = state.admin_rooms.lock().await;
+        lock.iter()
+            .filter(|(_, a)| a.is_meaningful())
+            .map(|(id, a)| (id.clone(), a.to_persisted()))
+            .collect()
+    };
+    let data = PersistedState {
+        secret: (*state.server_secret).clone(),
+        rooms,
+    };
+    let Ok(json) = serde_json::to_string(&data) else {
+        return;
+    };
+    let path = state_file_path();
+    let tmp = path.with_extension("json.tmp");
+    if tokio::fs::write(&tmp, json).await.is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).await;
+        }
+        let _ = tokio::fs::rename(&tmp, &path).await;
+    }
 }

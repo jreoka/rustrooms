@@ -434,6 +434,65 @@ pub(crate) async fn handle_socket(
                                         .get(&room_id)
                                         .map(|r| r.values().any(|c| !c.is_empty()))
                                         .unwrap_or(false);
+                                let channel_preexists = {
+                                    let local = rooms
+                                        .lock()
+                                        .await
+                                        .get(&room_id)
+                                        .map(|r| r.contains_key(&channel_id))
+                                        .unwrap_or(false);
+                                    let timed = state
+                                        .channel_creation_times
+                                        .lock()
+                                        .await
+                                        .get(&room_id)
+                                        .map(|t| t.contains_key(&channel_id))
+                                        .unwrap_or(false);
+                                    let remote = remote_users
+                                        .lock()
+                                        .await
+                                        .get(&room_id)
+                                        .map(|r| r.contains_key(&channel_id))
+                                        .unwrap_or(false);
+                                    local || timed || remote
+                                };
+
+                                // In a stage room only admins may create
+                                // channels. Checked before the channel entry
+                                // is materialized by the insert below.
+                                if !channel_preexists {
+                                    let blocked = {
+                                        let lock = state.admin_rooms.lock().await;
+                                        match lock.get(&room_id) {
+                                            Some(a) if a.kind == RoomKind::Stage => {
+                                                let key_ok = admin_key
+                                                    .as_deref()
+                                                    .zip(a.key_hash.as_deref())
+                                                    .map(|(k, h)| {
+                                                        crate::admin::verify_key(
+                                                            &state.server_secret,
+                                                            &room_id,
+                                                            k,
+                                                            h,
+                                                        )
+                                                    })
+                                                    .unwrap_or(false);
+                                                !(key_ok || a.is_admin(&user_id))
+                                            }
+                                            _ => false,
+                                        }
+                                    };
+                                    if blocked {
+                                        let error_msg = crate::admin::error_text(
+                                            "STAGE_CHANNEL_ADMIN_ONLY",
+                                            "Only admins can create channels in a stage room.",
+                                        );
+                                        let _ = tx.send(Ok(Message::Text(error_msg.into()))).await;
+                                        tokio::time::sleep(std::time::Duration::from_millis(500))
+                                            .await;
+                                        return;
+                                    }
+                                }
 
                                 let mut rooms_lock = rooms.lock().await;
 
@@ -1334,6 +1393,12 @@ pub(crate) async fn handle_socket(
                                 .and_then(|d| d.get("userId"))
                                 .and_then(|v| v.as_str())
                                 .map(|v| v.to_string());
+                            let move_channel = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("channelId"))
+                                .and_then(|v| v.as_str())
+                                .and_then(normalize_channel_id);
                             let actor_is_admin = {
                                 let lock = state.admin_rooms.lock().await;
                                 lock.get(&room_id)
@@ -1646,6 +1711,62 @@ pub(crate) async fn handle_socket(
                                     .await;
                                     schedule_empty_room_cleanup(&state, &room_id).await;
                                     crate::admin::broadcast_admin_update(&state, &room_id).await;
+                                }
+                                "move" => {
+                                    let Some(dest) = move_channel else { continue };
+                                    if dest != channel_id {
+                                        // Pre-approve the landing join: the
+                                        // switch closes the old connection
+                                        // first, so without this a lobby room
+                                        // would make the moved user knock.
+                                        {
+                                            let mut lock = state.admin_rooms.lock().await;
+                                            if let Some(a) = lock.get_mut(&room_id) {
+                                                a.approved.insert(target.clone());
+                                            }
+                                        }
+                                        let text = crate::admin::signal_text(
+                                            "channel-moved",
+                                            Some(target.clone()),
+                                            Some(serde_json::json!({
+                                                "channelId": dest
+                                            })),
+                                        );
+                                        let delivered = {
+                                            let rooms_lock = rooms.lock().await;
+                                            let mut delivered = false;
+                                            if let Some(room) = rooms_lock.get(&room_id) {
+                                                for (_, channel) in room.iter() {
+                                                    if let Some((target_tx, _)) =
+                                                        channel.get(&target)
+                                                    {
+                                                        let _ = target_tx.try_send(Ok(
+                                                            Message::Text(text.clone().into()),
+                                                        ));
+                                                        delivered = true;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            delivered
+                                        };
+                                        if !delivered {
+                                            distributed_broadcast(
+                                                &state,
+                                                &DistributedMessage {
+                                                    msg_type: "mod-action".into(),
+                                                    room_id: room_id.clone(),
+                                                    channel_id: dest.clone(),
+                                                    user_id: target.clone(),
+                                                    msg_id: Uuid::new_v4().to_string(),
+                                                    status: None,
+                                                    data: None,
+                                                    signal_msg: Some(text),
+                                                },
+                                            )
+                                            .await;
+                                        }
+                                    }
                                 }
                                 "knock-approve" | "knock-deny" => {
                                     let approve = action == "knock-approve";
@@ -2144,6 +2265,7 @@ pub(crate) async fn handle_socket(
         let remote_users_clone = remote_users.clone();
         let times_clone = state.channel_creation_times.clone();
         let admin_clone = state.admin_rooms.clone();
+        let state_clone = state.clone();
         let room_id_clone = room_id.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS)).await;
@@ -2186,6 +2308,7 @@ pub(crate) async fn handle_socket(
             if removed_room {
                 times_clone.lock().await.remove(&room_id_clone);
                 admin_clone.lock().await.remove(&room_id_clone);
+                crate::admin::persist_state(&state_clone).await;
                 let mut cleanup_lock = cleanup_clone.lock().await;
                 if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
                     cleanup_lock.remove(&room_id_clone);
@@ -2205,6 +2328,7 @@ pub(crate) async fn handle_socket(
                     let remote_retry = remote_users_clone.clone();
                     let times_retry = times_clone.clone();
                     let admin_retry = admin_clone.clone();
+                    let state_retry = state_clone.clone();
                     let rid_retry = room_id_clone.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS))
@@ -2244,6 +2368,7 @@ pub(crate) async fn handle_socket(
                         if removed {
                             times_retry.lock().await.remove(&rid_retry);
                             admin_retry.lock().await.remove(&rid_retry);
+                            crate::admin::persist_state(&state_retry).await;
                             let mut cl = cleanup_retry.lock().await;
                             if cl.get(&rid_retry).copied() == Some(next_gen) {
                                 cl.remove(&rid_retry);

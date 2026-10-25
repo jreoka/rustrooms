@@ -62,14 +62,33 @@ async fn main() {
 
     let node_id = Uuid::new_v4().to_string();
 
-    let server_secret: Arc<Vec<u8>> = Arc::new(
-        [
-            *Uuid::new_v4().as_bytes(),
-            *Uuid::new_v4().as_bytes(),
-        ]
-        .concat(),
-    );
-    let admin_rooms: AdminMap = Arc::new(Mutex::new(HashMap::new()));
+    // Restore persisted admin state (creator keys, admins, bans,
+    // lobby/stage config) so restarts and rollouts don't strip it.
+    // Restored rooms start empty, so arm the normal expiry cleanup:
+    // if nobody rejoins within the grace period the entry is deleted
+    // exactly as if the server had never stopped.
+    let (server_secret, admin_rooms, restored_room_ids) = match admin::load_persisted() {
+        Some(p) if p.secret.len() >= 16 => {
+            let map: HashMap<String, RoomAdmin> = p
+                .rooms
+                .into_iter()
+                .map(|(id, room)| (id, RoomAdmin::from(room)))
+                .collect();
+            let ids: Vec<String> = map.keys().cloned().collect();
+            (Arc::new(p.secret), Arc::new(Mutex::new(map)), ids)
+        }
+        _ => (
+            Arc::new(
+                [
+                    *Uuid::new_v4().as_bytes(),
+                    *Uuid::new_v4().as_bytes(),
+                ]
+                .concat(),
+            ),
+            Arc::new(Mutex::new(HashMap::new())),
+            Vec::new(),
+        ),
+    };
 
     let state = AppState {
         rooms,
@@ -86,6 +105,19 @@ async fn main() {
         admin_rooms,
         server_secret,
     };
+
+    if !restored_room_ids.is_empty() {
+        println!(
+            "ADMIN: Restored admin state for {} room(s) from disk",
+            restored_room_ids.len()
+        );
+        let cleanup_state = state.clone();
+        tokio::spawn(async move {
+            for room_id in restored_room_ids {
+                distributed::schedule_empty_room_cleanup(&cleanup_state, &room_id).await;
+            }
+        });
+    }
 
     let app = Router::new()
         .route("/", get(index))

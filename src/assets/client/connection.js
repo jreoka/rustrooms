@@ -164,6 +164,12 @@
                                 case 'mod-action':
                                     if (msg.userId === persistentUserId) applyModAction(msg.data);
                                     break;
+                                case 'channel-moved':
+                                    if (msg.data && msg.data.channelId && msg.data.channelId !== channelId) {
+                                        showModNotice('An admin moved you to #' + msg.data.channelId);
+                                        switchChannel(msg.data.channelId);
+                                    }
+                                    break;
                                 case 'mod-state':
                                     if (msg.data && msg.data.forced) {
                                         myForceFlags = {
@@ -179,11 +185,12 @@
                                     delete userAvatarCache[msg.userId];
                                     if (msg.userId === persistentUserId) {
                                         hasLeftRoom = true;
-                                        alert("You have been banned from this room.");
-                                        sessionStorage.removeItem('rustrooms_setup_done');
-                                        sessionStorage.removeItem('rustrooms_last_room_id');
-                                        sessionStorage.removeItem('rustrooms_last_channel_id');
-                                        window.location.href = "/";
+                                        showCustomAlert("Banned", "You have been banned from this room.", () => {
+                                            sessionStorage.removeItem('rustrooms_setup_done');
+                                            sessionStorage.removeItem('rustrooms_last_room_id');
+                                            sessionStorage.removeItem('rustrooms_last_channel_id');
+                                            window.location.href = "/";
+                                        });
                                     } else {
                                         playNotificationSound('leave');
                                         removePeer(msg.userId);
@@ -226,8 +233,14 @@
                                         }
                                     } else if (msg.data && msg.data.code === 'BANNED') {
                                         hasLeftRoom = true;
-                                        alert("You are banned from this room.");
-                                        window.location.href = "/";
+                                        showCustomAlert("Banned", "You are banned from this room.", () => {
+                                            window.location.href = "/";
+                                        });
+                                    } else if (msg.data && msg.data.code === 'STAGE_CHANNEL_ADMIN_ONLY') {
+                                        hasLeftRoom = true;
+                                        showCustomAlert("Stage room", msg.data.message || "Only admins can create channels in a stage room.", () => {
+                                            window.location.href = "/" + encodeURIComponent(roomId);
+                                        });
                                     } else if (msg.data && ['NOT_ADMIN', 'CANNOT_DEMOTE_CREATOR', 'CANNOT_BAN', 'MUST_DEMOTE_FIRST', 'KICK_SELF'].includes(msg.data.code)) {
                                         showModNotice(msg.data.message || "That action isn't allowed.");
                                     } else {
@@ -358,11 +371,12 @@
                                     delete userAvatarCache[msg.userId];
                                     if (msg.userId === persistentUserId) {
                                         hasLeftRoom = true;
-                                        alert("You have been kicked from the room.");
-                                        sessionStorage.removeItem('rustrooms_setup_done');
-                                        sessionStorage.removeItem('rustrooms_last_room_id');
-                                        sessionStorage.removeItem('rustrooms_last_channel_id');
-                                        window.location.href = "/";
+                                        showCustomAlert("Kicked", "You have been kicked from the room.", () => {
+                                            sessionStorage.removeItem('rustrooms_setup_done');
+                                            sessionStorage.removeItem('rustrooms_last_room_id');
+                                            sessionStorage.removeItem('rustrooms_last_channel_id');
+                                            window.location.href = "/";
+                                        });
                                     } else {
                                         playNotificationSound('leave');
                                         removePeer(msg.userId);
@@ -2326,7 +2340,7 @@
                         return;
                     } catch (e) {
                         console.error("Could not add camera", e);
-                        alert("Could not access camera. Please check permissions.");
+                        showCustomAlert("Camera", "Could not access camera. Please check permissions.");
                         btn.classList.add('active-red');
                         btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>`;
                         updateLocalAvatar();
@@ -2434,7 +2448,7 @@
                         updateLocalMediaLayout();
                     } catch (e) {
                         console.error("Could not re-add camera", e);
-                        alert("Could not access camera. Please check permissions.");
+                        showCustomAlert("Camera", "Could not access camera. Please check permissions.");
                         btn.classList.add('active-red');
                         btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M21 21l-3.5-3.5m-2-2l-2-2m-2-2l-2-2m-2-2l-3.5-3.5"></path><path d="M15 7h5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5"></path><path d="M4 8v8a2 2 0 0 0 2 2h4.5"></path></svg>`;
                     }
@@ -2550,7 +2564,7 @@
         async function toggleScreen() {
 
             if (isMobileDevice()) {
-                alert('Screen sharing is not supported on mobile devices.');
+                showCustomAlert("Screen sharing", "Screen sharing is not supported on mobile devices.");
                 return;
             }
 

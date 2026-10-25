@@ -350,6 +350,7 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
         if removed {
             state.channel_creation_times.lock().await.remove(&room_id);
             state.admin_rooms.lock().await.remove(&room_id);
+            crate::admin::persist_state(&state).await;
             let mut generations = state.room_cleanup_generations.lock().await;
             if generations.get(&room_id).copied() == Some(generation) {
                 generations.remove(&room_id);

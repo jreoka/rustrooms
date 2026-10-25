@@ -1222,7 +1222,7 @@
 
                  } catch (e) {
                      console.error("Audio switch failed", e);
-                     alert("Failed to switch microphone: " + e.message);
+                     showCustomAlert("Microphone", "Failed to switch microphone: " + e.message);
                  }
              }
 
@@ -1847,7 +1847,7 @@
             if (!file) return;
 
             if (file.size > MAX_AVATAR_UPLOAD_SANITY_BYTES) {
-                alert("File is too large! Maximum allowed size is 30MB.");
+                showCustomAlert("File too large", "Maximum allowed size is 30MB.");
                 input.value = '';
                 return;
             }
@@ -2681,7 +2681,7 @@
                          savePreferences();
                      } catch (e) {
                          console.error("Could not add camera", e);
-                         alert("Could not access camera. Please check permissions.");
+                         showCustomAlert("Camera", "Could not access camera. Please check permissions.");
                          updatePreviewButtons();
                      }
                  })();
@@ -3073,9 +3073,9 @@
         function canSpeakId(uid) {
             return roomAdminState.kind !== 'stage' || isAdminId(uid) || roomAdminState.speakers.includes(uid);
         }
-        function sendAdminAction(action, userId) {
+        function sendAdminAction(action, userId, extra) {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'admin-action', data: { action, userId } }));
+                ws.send(JSON.stringify({ type: 'admin-action', data: Object.assign({ action, userId }, extra || {}) }));
             }
         }
 
@@ -3105,6 +3105,10 @@
             };
             applyStageRole();
             enforceAudienceAudio();
+            const sidebarActions = document.getElementById('sidebarActions');
+            if (sidebarActions) {
+                sidebarActions.style.display = (roomAdminState.kind === 'stage' && !iAmAdmin()) ? 'none' : '';
+            }
             if (typeof updateRoomListUI === 'function') updateRoomListUI();
             renderKnocks();
         }

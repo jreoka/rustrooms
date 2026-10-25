@@ -2104,3 +2104,20 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 .control-btn.ctrl-locked { opacity: 0.45; cursor: not-allowed; }
+
+/* Stage sidebar sections + user drag & drop */
+.stage-group { border-radius: 10px; padding: 2px 2px 4px; }
+.stage-group-label {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 4px 8px 2px;
+}
+.stage-divider { height: 1px; background: var(--border-subtle); margin: 5px 6px; }
+.stage-empty { font-size: 10px; font-style: italic; color: var(--text-muted); padding: 2px 8px 4px; }
+.stage-group.drop-hover { background: rgba(87, 94, 234, 0.13); }
+.room-item.drop-hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.room-user-row[draggable="true"] { cursor: grab; }
+.room-user-row[draggable="true"]:active { cursor: grabbing; }

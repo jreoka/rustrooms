@@ -214,6 +214,73 @@ impl RoomAdmin {
 
 pub(crate) type AdminMap = Arc<Mutex<HashMap<String, RoomAdmin>>>;
 
+// On-disk form of the admin state, written by admin::persist_state so
+// room creators, promoted admins, bans, lobby/stage configuration and
+// force states survive server restarts and version rollouts. The
+// signing secret is stored alongside (file is 0600): without it the
+// stored key hashes could never verify after a restart. Entries are
+// still deleted by the normal room-expiry cleanup, so a call that
+// truly ends takes its admin state with it.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PersistedRoomAdmin {
+    pub key_hash: Option<String>,
+    pub creator_id: Option<String>,
+    pub admins: HashSet<String>,
+    pub banned: HashSet<String>,
+    pub lobby: bool,
+    pub kind: RoomKind,
+    pub speakers: HashSet<String>,
+    pub forced: HashMap<String, ForceFlags>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PersistedState {
+    pub secret: Vec<u8>,
+    pub rooms: HashMap<String, PersistedRoomAdmin>,
+}
+
+impl RoomAdmin {
+    pub(crate) fn to_persisted(&self) -> PersistedRoomAdmin {
+        PersistedRoomAdmin {
+            key_hash: self.key_hash.clone(),
+            creator_id: self.creator_id.clone(),
+            admins: self.admins.clone(),
+            banned: self.banned.clone(),
+            lobby: self.lobby,
+            kind: self.kind,
+            speakers: self.speakers.clone(),
+            forced: self.forced.clone(),
+        }
+    }
+
+    // Worth writing to disk at all (join attempts against rooms owned
+    // by other nodes can create empty local entries).
+    pub(crate) fn is_meaningful(&self) -> bool {
+        self.creator_id.is_some()
+            || !self.admins.is_empty()
+            || !self.banned.is_empty()
+            || self.lobby
+            || self.kind == RoomKind::Stage
+    }
+}
+
+impl From<PersistedRoomAdmin> for RoomAdmin {
+    fn from(p: PersistedRoomAdmin) -> RoomAdmin {
+        RoomAdmin {
+            key_hash: p.key_hash,
+            creator_id: p.creator_id,
+            admins: p.admins,
+            banned: p.banned,
+            lobby: p.lobby,
+            kind: p.kind,
+            speakers: p.speakers,
+            forced: p.forced,
+            pending: HashMap::new(),
+            approved: HashSet::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct DistributedMessage {
     #[serde(rename = "type")]

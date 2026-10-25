@@ -83,7 +83,7 @@
             if (!file) return;
 
             if (file.size > MAX_AVATAR_UPLOAD_SANITY_BYTES) {
-                alert("File is too large! Maximum allowed size is 30MB.");
+                showCustomAlert("File too large", "Maximum allowed size is 30MB.");
                 input.value = '';
                 return;
             }

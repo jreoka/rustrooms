@@ -486,14 +486,21 @@
             animateModalClose('nameModal');
         }
 
-        function showCustomAlert(title, message) {
+        let customAlertCallback = null;
+        function showCustomAlert(title, message, onOk) {
             document.getElementById('alertTitle').innerText = title;
             document.getElementById('alertMessage').innerText = message;
+            customAlertCallback = typeof onOk === 'function' ? onOk : null;
             document.getElementById('alertModal').classList.add('open');
         }
 
         function closeCustomAlert() {
             animateModalClose('alertModal');
+            if (customAlertCallback) {
+                const cb = customAlertCallback;
+                customAlertCallback = null;
+                cb();
+            }
         }
 
         function showPasswordModal(title, message, callback) {
@@ -945,6 +952,10 @@
         }
 
         async function createNewChannel() {
+            if (typeof roomAdminState !== 'undefined' && roomAdminState.kind === 'stage' && !iAmAdmin()) {
+                showCustomAlert("Admins only", "Only admins can create channels in a stage room.");
+                return;
+            }
             showNameModal("Create New Channel", "Enter channel name", (name) => {
                 if (!name) return;
                 if ([...name].length > 32) {
@@ -1130,7 +1141,8 @@
                 roomEl.ondragleave = (e) => handleRoomDragLeave(e);
                 roomEl.ondrop = (e) => handleRoomDrop(e, rid);
 
-                let usersHtml = '';
+                let stageRowsHtml = '';
+                let audienceRowsHtml = '';
                 const crownSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l4.6 6.2L21 5l-1.7 11H4.7L3 5l4.4 4.2z"/><rect x="4.7" y="18" width="14.6" height="2.2" rx="1"/></svg>`;
                 const earSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>`;
                 const users = roomInfo.users || {};
@@ -1157,8 +1169,8 @@
                         staticFrame = userAvatarStaticFrame;
                     }
 
-                    usersHtml += `
-                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchend="handleUserTouchEnd(event)" ontouchmove="handleUserTouchCancel()">
+                    const rowHtml = `
+                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" ondragstart="handleUserDragStart(event, '${uid}')" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchend="handleUserTouchEnd(event)" ontouchmove="handleUserTouchCancel()">
                             <div class="user-avatar-wrap">
                                 <div class="mini-avatar">
                                     ${avatar ? (isGif && staticFrame ? `<img src="${escapeHtml(staticFrame)}" data-gif-src="${escapeHtml(avatar)}" data-static-src="${escapeHtml(staticFrame)}">` : `<img src="${escapeHtml(avatar)}">`) : `<div class="mini-avatar-placeholder">${escapeHtml(u.nickname.charAt(0).toUpperCase())}</div>`}
@@ -1191,6 +1203,11 @@
                             </div>
                         </div>
                     `;
+                    if (roomAdminState.kind === 'stage' && !canSpeakId(uid)) {
+                        audienceRowsHtml += rowHtml;
+                    } else {
+                        stageRowsHtml += rowHtml;
+                    }
                 });
 
                 roomEl.innerHTML = `
@@ -1213,9 +1230,9 @@
                              ` : ''}
                         </div>
                     </div>
-                    <div class="room-users flex flex-col gap-1 mt-2 pointer-events-none">
-                        ${usersHtml}
-                        ${userIds.length === 0 ? '<span class="text-[10px] text-zinc-600 italic px-2">Empty</span>' : ''}
+                    <div class="room-users flex flex-col gap-1 mt-2" ondragover="handleChannelDragOver(event)" ondragleave="handleChannelDragLeave(event)" ondrop="handleUserDropOnChannel(event, '${rid}')">
+                        ${roomAdminState.kind === 'stage' ? stageSectionsHtml(stageRowsHtml, audienceRowsHtml, rid) : stageRowsHtml}
+                        ${userIds.length === 0 && roomAdminState.kind !== 'stage' ? '<span class="text-[10px] text-zinc-600 italic px-2">Empty</span>' : ''}
                     </div>
                 `;
 
@@ -1232,6 +1249,96 @@
                 `;
                 container.appendChild(empty);
             }
+        }
+
+        // ---- Drag & drop user moves (admins) ----
+        let draggedUserId = null;
+
+        function handleUserDragStart(e, uid) {
+            draggedUserId = uid;
+            e.stopPropagation();
+            if (e.dataTransfer) {
+                try { e.dataTransfer.setData('text/plain', uid); } catch (err) {}
+                e.dataTransfer.effectAllowed = 'move';
+            }
+        }
+
+        function handleUserDragEnd() {
+            draggedUserId = null;
+            document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
+        }
+
+        function handleStageDragOver(e) {
+            if (!draggedUserId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.currentTarget.classList.add('drop-hover');
+        }
+
+        function handleStageDragLeave(e) {
+            e.currentTarget.classList.remove('drop-hover');
+        }
+
+        function handleUserDropOnStage(e, rid) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.currentTarget.classList.remove('drop-hover');
+            const uid = draggedUserId;
+            draggedUserId = null;
+            if (!uid) return;
+            if (rid !== channelId) {
+                moveUserToChannel(uid, rid);
+                return;
+            }
+            if (e.currentTarget.dataset.drop === 'stage') {
+                if (!canSpeakId(uid)) sendAdminAction('to-stage', uid);
+            } else if (canSpeakId(uid) && !isAdminId(uid)) {
+                sendAdminAction('to-audience', uid);
+            }
+        }
+
+        function handleChannelDragOver(e) {
+            if (!draggedUserId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const item = e.currentTarget.closest('.room-item');
+            if (item) item.classList.add('drop-hover');
+        }
+
+        function handleChannelDragLeave(e) {
+            const item = e.currentTarget.closest('.room-item');
+            if (item) item.classList.remove('drop-hover');
+        }
+
+        function handleUserDropOnChannel(e, rid) {
+            e.preventDefault();
+            e.stopPropagation();
+            const item = e.currentTarget.closest('.room-item');
+            if (item) item.classList.remove('drop-hover');
+            const uid = draggedUserId;
+            draggedUserId = null;
+            if (uid && rid !== channelId) moveUserToChannel(uid, rid);
+        }
+
+        function moveUserToChannel(uid, destChannel) {
+            if (uid === persistentUserId) {
+                switchChannel(destChannel);
+                return;
+            }
+            sendAdminAction('move', uid, { channelId: destChannel });
+        }
+
+        function stageSectionsHtml(stageRows, audienceRows, rid) {
+            return `
+                <div class="stage-group pointer-events-auto" data-drop="stage" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, '${rid}')">
+                    <div class="stage-group-label">On stage</div>
+                    ${stageRows || '<div class="stage-empty">No one on stage</div>'}
+                </div>
+                <div class="stage-divider"></div>
+                <div class="stage-group pointer-events-auto" data-drop="audience" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, '${rid}')">
+                    <div class="stage-group-label">Listeners</div>
+                    ${audienceRows || '<div class="stage-empty">No listeners</div>'}
+                </div>`;
         }
 
         async function createRoom() {
@@ -1251,11 +1358,11 @@
                     sessionStorage.setItem('rustrooms_welcomed', 'true');
                     window.location.href = `/${crypto.randomUUID()}`;
                 } else {
-                    alert("Error creating room");
+                    showCustomAlert("Error", "Error creating room");
                 }
             } catch (e) {
                 console.error(e);
-                alert("Error creating room");
+                showCustomAlert("Error", "Error creating room");
             }
         }
 
@@ -1279,12 +1386,12 @@
                      input.placeholder = "Incorrect Password";
                  } else {
                      sessionStorage.removeItem('rustrooms_room_password');
-                     alert("Error creating room");
+                     showCustomAlert("Error", "Error creating room");
                  }
             } catch (e) {
                 console.error(e);
                 sessionStorage.removeItem('rustrooms_room_password');
-                alert("Error creating room");
+                showCustomAlert("Error", "Error creating room");
             }
         }
 
