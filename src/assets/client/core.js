@@ -3183,9 +3183,36 @@
             if (!roomId) return;
             const channel = channelId || 'General';
             const list = loadRecentCalls().filter(e => !(e.room === roomId && e.channel === channel));
-            list.unshift({ room: roomId, channel: channel, ts: Date.now() });
+            list.unshift({ room: roomId, channel: channel, ts: Date.now(), with: Object.values(recentCallPeers) });
             saveRecentCalls(list.slice(0, RECENT_CALLS_MAX));
             renderRecentCalls();
+        }
+
+        // Who else is in the current call, by userId. Fed by the peer
+        // lifecycle in connection.js so recent entries can say who a
+        // "# General" call was actually with.
+        const recentCallPeers = {};
+
+        function noteRecentCallPeer(userId, name) {
+            if (!userId || !name || recentCallPeers[userId] === name) return;
+            recentCallPeers[userId] = name;
+            refreshRecentCallParticipants();
+        }
+
+        function forgetRecentCallPeer(userId) {
+            // Memory only: the stored entry keeps the last roster it saw,
+            // so leaving a call doesn't erase who was in it.
+            delete recentCallPeers[userId];
+        }
+
+        function refreshRecentCallParticipants() {
+            if (!roomId) return;
+            const channel = channelId || 'General';
+            const list = loadRecentCalls();
+            const entry = list.find(e => e.room === roomId && e.channel === channel);
+            if (!entry) return;
+            entry.with = [...new Set(Object.values(recentCallPeers))];
+            saveRecentCalls(list);
         }
 
         function removeRecentCall(room, channel) {
@@ -3228,9 +3255,26 @@
                 a.href = recentCallUrl(entry);
                 a.title = new Date(entry.ts).toLocaleString();
 
+                const main = document.createElement('span');
+                main.className = 'recent-call-main';
+
                 const name = document.createElement('span');
                 name.className = 'recent-call-name';
                 name.textContent = '# ' + entry.channel;
+                main.appendChild(name);
+
+                if (Array.isArray(entry.with)) {
+                    const sub = document.createElement('span');
+                    sub.className = 'recent-call-sub';
+                    if (entry.with.length === 0) {
+                        sub.textContent = 'Just you';
+                    } else if (entry.with.length <= 3) {
+                        sub.textContent = 'with ' + entry.with.join(', ');
+                    } else {
+                        sub.textContent = 'with ' + entry.with.slice(0, 2).join(', ') + ' +' + (entry.with.length - 2) + ' more';
+                    }
+                    main.appendChild(sub);
+                }
 
                 const time = document.createElement('span');
                 time.className = 'recent-call-time';
@@ -3248,7 +3292,7 @@
                     removeRecentCall(entry.room, entry.channel);
                 });
 
-                a.appendChild(name);
+                a.appendChild(main);
                 a.appendChild(time);
                 a.appendChild(remove);
                 listEl.appendChild(a);

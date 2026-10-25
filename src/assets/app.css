@@ -1699,11 +1699,23 @@ video.active + .avatar-layer { display: none !important; }
     background: var(--md-surface-container-high);
     border-color: var(--md-outline);
 }
+.recent-call-main {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
+}
 .recent-call-name {
     font-size: 14px;
     font-weight: 500;
-    flex: 1;
-    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.recent-call-sub {
+    font-size: 12px;
+    color: var(--md-on-surface-variant);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

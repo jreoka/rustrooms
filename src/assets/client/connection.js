@@ -641,6 +641,7 @@
                 // empty names to "Guest", and skipping them would leave the
                 // stale name visible here while the owner shows "Guest".
                 if (nameSpan) nameSpan.innerText = nickname || 'Guest';
+                noteRecentCallPeer(userId, nickname || 'Guest');
 
                 const statusContainer = wrapper.querySelector('.peer-status-icons');
                 if (statusContainer) {
@@ -1277,6 +1278,7 @@
             // Same fallback the owner's own UI uses: an unset nickname is
             // "Guest" for everyone, never a name only one side shows.
             const displayName = nickname || 'Guest';
+            noteRecentCallPeer(userId, displayName);
 
             const pc = new RTCPeerConnection(rtcConfig);
             peers[userId] = pc;
@@ -1628,6 +1630,7 @@
         }
 
         function removePeer(userId) {
+            forgetRecentCallPeer(userId);
             cleanupAudioMonitor(`wrapper-${userId}`);
             if (typeof stopGifFrameAnimation === 'function') {
                 stopGifFrameAnimation(`wrapper-${userId}`);
