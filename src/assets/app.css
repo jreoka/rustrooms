@@ -1298,21 +1298,12 @@ video.active + .avatar-layer { display: none !important; }
     color: var(--md-on-surface-variant);
 }
 
-.device-badge {
-    position: absolute;
-    right: -5px;
-    bottom: -5px;
-    width: 12px;
-    height: 12px;
-    display: flex;
+.device-inline {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    background: var(--md-surface-container-high);
-    border: 1px solid var(--md-outline-variant);
-    border-radius: 4px;
+    flex-shrink: 0;
     color: var(--md-on-surface-variant);
-    z-index: 60;
-    pointer-events: none;
+    opacity: 0.55;
 }
 
 .status-indicators {
