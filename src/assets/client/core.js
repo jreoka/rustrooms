@@ -3001,7 +3001,7 @@
             }
         }
 
-        // ---- Theme: near-black dark (default) / optional light ----
+        // ---- Theme: dark (default) / optional light ----
         function currentTheme() {
             return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
         }

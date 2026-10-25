@@ -1,7 +1,7 @@
 /* ============================================================
  * Rust Rooms — flat dark UI (neutral zinc + one indigo accent)
  *
- * Restraint is the design: near-black neutral surfaces stepped
+ * Restraint is the design: dark neutral surfaces stepped
  * by a few percent each, hairline borders instead of shadows,
  * and a single indigo accent reserved for primary actions,
  * focus, and live state. No gradients, no glass, no glows.
