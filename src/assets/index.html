@@ -261,6 +261,16 @@
                     <div class="border-t border-[var(--border-subtle)] pt-4 mt-4 space-y-3 text-left">
                         <div class="m3-row flex items-center justify-between">
                             <div class="flex flex-col">
+                                <span class="text-sm font-semibold text-white">Light Mode</span>
+                                <span class="text-xs text-zinc-400">Use a light color scheme instead of the dark one</span>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
+                                <input type="checkbox" id="setupTheme" onchange="toggleTheme(this.checked)" class="sr-only peer">
+                                <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
+                            </label>
+                        </div>
+                        <div class="m3-row flex items-center justify-between">
+                            <div class="flex flex-col">
                                 <span class="text-sm font-semibold text-white">Low Bandwidth Mode</span>
                                 <span class="text-xs text-zinc-400">Reduces audio & video quality to save data</span>
                             </div>

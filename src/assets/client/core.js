@@ -3021,6 +3021,8 @@
             if (moon) moon.classList.toggle('hidden', !light);
             const settingsTheme = document.getElementById('settingsTheme');
             if (settingsTheme) settingsTheme.checked = light;
+            const setupTheme = document.getElementById('setupTheme');
+            if (setupTheme) setupTheme.checked = light;
         }
 
         function toggleTheme(force) {
