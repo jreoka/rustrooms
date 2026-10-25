@@ -1432,6 +1432,11 @@
                 }
                 
                 document.getElementById('inviteChannelName').innerText = `# ${data.name}`;
+
+                const isStage = data.kind === 'stage';
+                document.getElementById('inviteKindBadge').innerText = isStage ? 'Live Stage' : 'Live Call';
+                document.getElementById('inviteStageNote').classList.toggle('hidden', !isStage);
+                document.getElementById('inviteJoinLabel').innerText = isStage ? 'Join as Listener' : 'Join Conversation';
                 
                 const userList = document.getElementById('inviteUserList');
                 userList.innerHTML = '';

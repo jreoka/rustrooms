@@ -191,10 +191,11 @@
                       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                       <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
                     </span>
-                    Live Call
+                    <span id="inviteKindBadge">Live Call</span>
                 </div>
                 <h1 id="inviteChannelName" class="text-3xl md:text-4xl font-bold tracking-tight text-white break-words"># General</h1>
                 <p id="inviteCallDuration" class="text-zinc-400 text-sm font-medium">Running for 00:00:00</p>
+                <p id="inviteStageNote" class="hidden text-sm" style="color: var(--text-secondary); line-height: 1.625;">This is a <span class="font-semibold" style="color: var(--text-primary);">stage room</span>, not a regular call. You'll join as a listener — an admin can bring you on stage when it's your turn to speak.</p>
             </div>
 
             <div class="space-y-4">
@@ -206,7 +207,7 @@
 
             <div class="pt-4">
                 <button onclick="proceedToSetup()" class="btn-primary w-full py-4 rounded-lg font-bold text-lg transition-all shadow-lg hover:shadow-indigo-500/20 group">
-                    Join Conversation
+                    <span id="inviteJoinLabel">Join Conversation</span>
                     <svg class="inline-block ml-2 w-5 h-5 transition-transform group-hover:translate-x-1" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
                 </button>
             </div>

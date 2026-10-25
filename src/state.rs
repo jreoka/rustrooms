@@ -35,6 +35,10 @@ pub(crate) struct RoomStatus {
     pub(crate) users: HashMap<String, UserStatus>,
     #[serde(default)]
     pub created_at: u64,
+    /// "regular" or "stage" — lets the guest landing page label the room
+    /// correctly before anyone joins.
+    #[serde(default)]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

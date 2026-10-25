@@ -1067,6 +1067,7 @@ pub(crate) async fn broadcast_channel_list(
                     name: cid.clone(),
                     users: HashMap::new(),
                     created_at: *created_at,
+                    kind: String::new(),
                 },
             );
         }
@@ -1089,6 +1090,7 @@ pub(crate) async fn broadcast_channel_list(
                     name: cid.clone(),
                     users: user_map,
                     created_at,
+                    kind: String::new(),
                 },
             );
         }
@@ -1107,6 +1109,7 @@ pub(crate) async fn broadcast_channel_list(
                     name: cid.clone(),
                     users: HashMap::new(),
                     created_at,
+                    kind: String::new(),
                 });
             for (user_id, status) in users.iter() {
                 entry.users.insert(user_id.clone(), presence_status(status));

@@ -2716,10 +2716,22 @@ pub(crate) async fn channel_status(
     drop(remote_lock);
     drop(rooms_lock);
 
+    // The room kind lives in the admin state; in distributed mode it may
+    // only exist in Redis until something materializes it on this node.
+    crate::admin::load_admin_redis(&state, &room_id).await;
+    let kind = state
+        .admin_rooms
+        .lock()
+        .await
+        .get(&room_id)
+        .map(|admin| admin.kind.as_str().to_string())
+        .unwrap_or_else(|| "regular".to_string());
+
     axum::Json(RoomStatus {
         name: channel_id,
         users: users_map,
         created_at,
+        kind,
     })
     .into_response()
 }
