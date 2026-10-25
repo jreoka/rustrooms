@@ -9,7 +9,19 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" type="image/svg+xml" href="/icon.svg">
     <meta name="theme-color" content="#050506">
-    <script>try { var rrTheme = localStorage.getItem('rustrooms_theme'); if (rrTheme) document.documentElement.dataset.theme = rrTheme; } catch (e) {}</script>
+    <script>
+        // Before first paint: a saved theme wins; until the user picks one
+        // manually, follow the device light/dark setting.
+        try {
+            var rrTheme = localStorage.getItem('rustrooms_theme');
+            if (rrTheme !== 'light' && rrTheme !== 'dark') {
+                rrTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            }
+            document.documentElement.dataset.theme = rrTheme;
+            var rrMeta = document.querySelector('meta[name="theme-color"]');
+            if (rrMeta) rrMeta.setAttribute('content', rrTheme === 'light' ? '#F4F4F6' : '#050506');
+        } catch (e) {}
+    </script>
     <script src="/assets/tailwind.js"></script>
     <script src="/assets/tailwind-config.js"></script>
     <link href="/assets/inter.css" rel="stylesheet">

@@ -3336,3 +3336,16 @@
 
         applyTheme(currentTheme());
         renderRecentCalls();
+
+        // Until the user picks a theme manually (which saves it), keep
+        // following the device light/dark setting, including live flips.
+        try {
+            const osThemeQuery = window.matchMedia('(prefers-color-scheme: light)');
+            if (typeof osThemeQuery.addEventListener === 'function') {
+                osThemeQuery.addEventListener('change', () => {
+                    if (!localStorage.getItem('rustrooms_theme')) {
+                        applyTheme(osThemeQuery.matches ? 'light' : 'dark');
+                    }
+                });
+            }
+        } catch (e) {}
