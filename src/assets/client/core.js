@@ -412,6 +412,18 @@
 
         window.addEventListener('beforeunload', () => clearActiveTabSession(true));
         window.addEventListener('pagehide', () => clearActiveTabSession(true));
+        // Tab is really going away (not a BFCache freeze): tell the server
+        // so our departure is expedited instead of waiting out the full
+        // resume grace. A reload still resumes — its new socket lands well
+        // inside the expedited window.
+        window.addEventListener('pagehide', (event) => {
+            if (event.persisted) return;
+            try {
+                if (!hasLeftRoom && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'expedite-departure' }));
+                }
+            } catch(e) {}
+        });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 // If we are in the setup screen and not joined yet, 

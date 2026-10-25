@@ -329,6 +329,7 @@ pub(crate) async fn handle_socket(
     let mut is_joined = false;
     let mut is_pending_knock = false;
     let mut intentional_leave = false;
+    let mut expedite_departure = false;
     let mut message_window_started = std::time::Instant::now();
     let mut messages_in_window = 0u32;
     let mut bytes_in_window = 0usize;
@@ -469,6 +470,16 @@ pub(crate) async fn handle_socket(
                     if parsed.msg_type == "leave" && is_joined {
                         intentional_leave = true;
                         break;
+                    }
+
+                    // The page is going away (tab close / navigate /
+                    // reload): if this socket now drops, finalize the
+                    // held seat after the short expedited grace instead
+                    // of the full one. A reload reconnects inside the
+                    // expedited window and resumes as usual.
+                    if parsed.msg_type == "expedite-departure" {
+                        expedite_departure = true;
+                        continue;
                     }
 
                     if parsed.msg_type == "ping" {
@@ -2668,11 +2679,13 @@ pub(crate) async fn handle_socket(
         let state2 = state.clone();
         let room2 = room_id.clone();
         let user2 = user_id.clone();
+        let grace_secs = if expedite_departure {
+            crate::admin::resume_grace_secs().min(3)
+        } else {
+            crate::admin::resume_grace_secs()
+        };
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(
-                crate::admin::resume_grace_secs(),
-            ))
-            .await;
+            tokio::time::sleep(std::time::Duration::from_secs(grace_secs)).await;
             finalize_held_seat(&state2, &room2, &user2, Some(generation), true).await;
         });
     }
