@@ -131,6 +131,7 @@
             if (!overlay) return;
             overlay.classList.remove('welcome-exit');
             overlay.style.display = 'flex';
+            renderRecentCalls();
             requestAnimationFrame(() => overlay.classList.add('welcome-enter'));
         }
 
@@ -1008,6 +1009,7 @@
             reconnectionAttempts = 0;
             isReconnecting = false;
             connectWs();
+            recordRecentCall();
         }
 
         function switchChannel(newChannelId) {

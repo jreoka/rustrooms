@@ -3146,6 +3146,7 @@
             sessionStorage.setItem('rustrooms_setup_done', 'true');
             sessionStorage.setItem('rustrooms_last_room_id', roomId);
             sessionStorage.setItem('rustrooms_last_channel_id', channelId);
+            recordRecentCall();
 
             if (isOnTheGoMode) {
                 toggleOnTheGoMode(true, true);
@@ -3154,6 +3155,105 @@
             await requestWakeLock();
         }
 
+
+        // ---- Recent calls (landing page list) ----
+        // Stored locally, newest first, capped at 5; entries expire
+        // after 7 days so the list only ever shows calls you might
+        // plausibly rejoin.
+        const RECENT_CALLS_KEY = 'rustrooms_recent_calls';
+        const RECENT_CALLS_MAX = 5;
+        const RECENT_CALLS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+        function loadRecentCalls() {
+            try {
+                const raw = JSON.parse(localStorage.getItem(RECENT_CALLS_KEY) || '[]');
+                if (!Array.isArray(raw)) return [];
+                const cutoff = Date.now() - RECENT_CALLS_TTL_MS;
+                return raw.filter(e => e && e.room && e.ts > cutoff);
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function saveRecentCalls(list) {
+            try { localStorage.setItem(RECENT_CALLS_KEY, JSON.stringify(list)); } catch (e) {}
+        }
+
+        function recordRecentCall() {
+            if (!roomId) return;
+            const channel = channelId || 'General';
+            const list = loadRecentCalls().filter(e => !(e.room === roomId && e.channel === channel));
+            list.unshift({ room: roomId, channel: channel, ts: Date.now() });
+            saveRecentCalls(list.slice(0, RECENT_CALLS_MAX));
+            renderRecentCalls();
+        }
+
+        function removeRecentCall(room, channel) {
+            saveRecentCalls(loadRecentCalls().filter(e => !(e.room === room && e.channel === channel)));
+            renderRecentCalls();
+        }
+
+        function recentCallUrl(entry) {
+            const base = '/' + encodeURIComponent(entry.room);
+            return entry.channel && entry.channel.toLowerCase() !== 'general'
+                ? base + '/' + encodeURIComponent(entry.channel)
+                : base;
+        }
+
+        function formatRecentTime(ts) {
+            const mins = Math.floor((Date.now() - ts) / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return mins + 'm ago';
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return hours + 'h ago';
+            const days = Math.floor(hours / 24);
+            return days === 1 ? 'yesterday' : days + 'd ago';
+        }
+
+        function renderRecentCalls() {
+            const wrap = document.getElementById('recentCalls');
+            const listEl = document.getElementById('recentCallsList');
+            if (!wrap || !listEl) return;
+            const list = loadRecentCalls();
+            saveRecentCalls(list);
+            if (!list.length) {
+                wrap.style.display = 'none';
+                return;
+            }
+            wrap.style.display = '';
+            listEl.innerHTML = '';
+            for (const entry of list) {
+                const a = document.createElement('a');
+                a.className = 'recent-call';
+                a.href = recentCallUrl(entry);
+                a.title = new Date(entry.ts).toLocaleString();
+
+                const name = document.createElement('span');
+                name.className = 'recent-call-name';
+                name.textContent = '# ' + entry.channel;
+
+                const time = document.createElement('span');
+                time.className = 'recent-call-time';
+                time.textContent = formatRecentTime(entry.ts);
+
+                const remove = document.createElement('button');
+                remove.className = 'recent-call-remove';
+                remove.type = 'button';
+                remove.textContent = '\u00d7';
+                remove.title = 'Remove from recent calls';
+                remove.setAttribute('aria-label', 'Remove from recent calls');
+                remove.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    removeRecentCall(entry.room, entry.channel);
+                });
+
+                a.appendChild(name);
+                a.appendChild(time);
+                a.appendChild(remove);
+                listEl.appendChild(a);
+            }
+        }
 
         // ---- Theme: near-black dark (default) / optional light ----
         function currentTheme() {
@@ -3186,3 +3286,4 @@
         }
 
         applyTheme(currentTheme());
+        renderRecentCalls();
