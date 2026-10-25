@@ -1079,7 +1079,13 @@
                 const title = document.getElementById('emptyStateTitle');
                 const sub = document.getElementById('emptyStateSub');
                 if (title && sub) {
-                    if (roomAdminState.kind === 'stage' && count > 0) {
+                    if (roomAdminState.kind === 'stage' && canSpeakId(persistentUserId)) {
+                        // The stage only looks empty because the local user
+                        // is the one on it (self-view is the PiP, never a
+                        // grid tile) — don't claim the stage is empty.
+                        title.innerText = "You're on stage";
+                        sub.innerText = "You're the only one up here — listeners can see and hear you.";
+                    } else if (roomAdminState.kind === 'stage' && count > 0) {
                         title.innerText = 'Nobody is on the stage right now';
                         sub.innerText = 'Listeners can see and hear whoever is on stage.';
                     } else {
