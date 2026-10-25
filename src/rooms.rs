@@ -156,6 +156,17 @@ pub(crate) async fn finalize_held_seat(
             },
         )
         .await;
+        // The disconnect path refreshed the channel list while the seat
+        // was still held, so it (correctly) still showed the departed
+        // user. Now that the seat is really gone, refresh it again —
+        // otherwise the sidebar keeps showing them forever.
+        broadcast_channel_list(
+            &state.rooms,
+            &state.remote_users,
+            &state.channel_creation_times,
+            room_id,
+        )
+        .await;
     }
     if room_empty {
         on_room_maybe_empty(state, room_id).await;
