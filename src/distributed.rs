@@ -68,7 +68,7 @@ pub(crate) fn is_valid_distributed_message(msg: &DistributedMessage) -> bool {
 
     match msg.msg_type.as_str() {
         "user-joined" | "user-update" => msg.status.is_some(),
-        "user-left" | "user-kicked" | "delete-channel" => true,
+        "user-left" | "user-kicked" | "user-banned" | "delete-channel" => true,
         "channel-upsert" => msg
             .data
             .as_ref()
@@ -83,6 +83,8 @@ pub(crate) fn is_valid_distributed_message(msg: &DistributedMessage) -> bool {
             .and_then(normalize_channel_id)
             .is_some(),
         "cam-toggle" | "screen-toggle" => msg.data.is_some(),
+        "admin-update" | "knock-update" | "knock-response" => msg.data.is_some(),
+        "mod-action" => msg.signal_msg.is_some(),
         "signal" => msg.signal_msg.as_ref().is_some_and(|raw| {
             serde_json::from_str::<SignalMessage>(raw)
                 .ok()
@@ -132,7 +134,7 @@ async fn update_remote_ownership(
             .is_some_and(|owner| owner == source_node_id),
         // A kick is a deployment-wide moderation event and can originate on
         // a node other than the one hosting the target.
-        "user-kicked" => {
+        "user-kicked" | "user-banned" => {
             owners.remove(&key);
             true
         }
@@ -347,6 +349,7 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
         };
         if removed {
             state.channel_creation_times.lock().await.remove(&room_id);
+            state.admin_rooms.lock().await.remove(&room_id);
             let mut generations = state.room_cleanup_generations.lock().await;
             if generations.get(&room_id).copied() == Some(generation) {
                 generations.remove(&room_id);
@@ -510,7 +513,14 @@ async fn apply_distributed_message(
                 .await;
             }
         }
-        "user-left" | "user-kicked" => {
+        "user-left" | "user-kicked" | "user-banned" => {
+            if msg.msg_type == "user-banned" {
+                let mut lock = state.admin_rooms.lock().await;
+                lock.entry(msg.room_id.clone())
+                    .or_default()
+                    .banned
+                    .insert(msg.user_id.clone());
+            }
             let removed_remote = {
                 // user-left authorization removes the old ownership record
                 // before this state update. Hold the map while removing so a
@@ -538,7 +548,7 @@ async fn apply_distributed_message(
             };
             // A kick may target a user hosted on this node (cross-node kick):
             // remove them from the local channel and close their socket.
-            let removed_local = if msg.msg_type == "user-kicked" {
+            let removed_local = if matches!(msg.msg_type.as_str(), "user-kicked" | "user-banned") {
                 let mut rooms_lock = rooms.lock().await;
                 let mut removed_local = false;
                 let mut victim_tx = None;
@@ -551,7 +561,7 @@ async fn apply_distributed_message(
                 }
                 if removed_local {
                     let kick_notify = serde_json::to_string(&SignalMessage {
-                        msg_type: "user-kicked".into(),
+                        msg_type: msg.msg_type.clone(),
                         user_id: Some(msg.user_id.clone()),
                         target: None,
                         data: None,
@@ -584,6 +594,8 @@ async fn apply_distributed_message(
             if !removed_local {
                 let mtype = if msg.msg_type == "user-kicked" {
                     "user-kicked"
+                } else if msg.msg_type == "user-banned" {
+                    "user-banned"
                 } else {
                     "user-left"
                 };
@@ -831,6 +843,93 @@ async fn apply_distributed_message(
                 &msg.room_id,
             )
             .await;
+        }
+        "admin-update" => {
+            if let Some(ref data) = msg.data {
+                {
+                    let mut lock = state.admin_rooms.lock().await;
+                    lock.entry(msg.room_id.clone())
+                        .or_default()
+                        .apply_public_state(data);
+                }
+                let text = crate::admin::signal_text("admin-update", None, Some(data.clone()));
+                let rooms_lock = rooms.lock().await;
+                if let Some(room) = rooms_lock.get(&msg.room_id) {
+                    for (_, channel) in room.iter() {
+                        for (_, (tx, _)) in channel.iter() {
+                            let _ = tx.try_send(Ok(Message::Text(text.clone().into())));
+                        }
+                    }
+                }
+            }
+        }
+        "knock-update" => {
+            if let Some(ref data) = msg.data {
+                let admin_ids = {
+                    let lock = state.admin_rooms.lock().await;
+                    lock.get(&msg.room_id)
+                        .map(|a| a.admins.clone())
+                        .unwrap_or_default()
+                };
+                if !admin_ids.is_empty() {
+                    let text =
+                        crate::admin::signal_text("knock-update", None, Some(data.clone()));
+                    let rooms_lock = rooms.lock().await;
+                    if let Some(room) = rooms_lock.get(&msg.room_id) {
+                        for (_, channel) in room.iter() {
+                            for (uid, (tx, _)) in channel.iter() {
+                                if admin_ids.contains(uid) {
+                                    let _ =
+                                        tx.try_send(Ok(Message::Text(text.clone().into())));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "mod-action" => {
+            if let Some(ref text) = msg.signal_msg {
+                let rooms_lock = rooms.lock().await;
+                if let Some(room) = rooms_lock.get(&msg.room_id) {
+                    for (_, channel) in room.iter() {
+                        if let Some((target_tx, _)) = channel.get(&msg.user_id) {
+                            let _ =
+                                target_tx.try_send(Ok(Message::Text(text.clone().into())));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        "knock-response" => {
+            let approve = msg
+                .data
+                .as_ref()
+                .and_then(|d| d.get("approve"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let pending_tx = {
+                let mut lock = state.admin_rooms.lock().await;
+                lock.get_mut(&msg.room_id).and_then(|a| {
+                    let removed = a.pending.remove(&msg.user_id);
+                    if approve && removed.is_some() {
+                        a.approved.insert(msg.user_id.clone());
+                    }
+                    removed.map(|p| p.tx)
+                })
+            };
+            if let Some(ptx) = pending_tx {
+                if approve {
+                    let text = crate::admin::signal_text("knock-approved", None, None);
+                    let _ = ptx.try_send(Ok(Message::Text(text.into())));
+                } else {
+                    let text = crate::admin::signal_text("knock-denied", None, None);
+                    let _ = ptx.try_send(Ok(Message::Text(text.into())));
+                    let _ = ptx.try_send(Ok(Message::Close(None)));
+                }
+                crate::admin::send_knock_update(state, &msg.room_id).await;
+            }
         }
         "signal" => {
             if let Some(ref signal_json) = msg.signal_msg
@@ -1142,6 +1241,8 @@ mod tests {
             recent_distributed_msg_ids: Arc::new(Mutex::new(HashSet::new())),
             distributed_msg_history: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             node_id: Uuid::new_v4().to_string(),
+            admin_rooms: Arc::new(Mutex::new(HashMap::new())),
+            server_secret: Arc::new(vec![7u8; 32]),
         }
     }
 

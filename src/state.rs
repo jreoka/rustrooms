@@ -84,6 +84,136 @@ pub(crate) const MAX_DISTRIBUTED_DATA_LEN: usize = 3 * 1024 * 1024;
 pub(crate) const PROFILE_IMAGE_UPDATE_COOLDOWN_SECS: u64 = 5;
 pub(crate) const JOIN_TIMEOUT_SECS: u64 = 30;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum RoomKind {
+    #[default]
+    Regular,
+    Stage,
+}
+
+impl RoomKind {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            RoomKind::Regular => "regular",
+            RoomKind::Stage => "stage",
+        }
+    }
+
+    pub(crate) fn from_str(value: &str) -> RoomKind {
+        if value.eq_ignore_ascii_case("stage") {
+            RoomKind::Stage
+        } else {
+            RoomKind::Regular
+        }
+    }
+}
+
+// Moderation state an admin has imposed on one user. Enforced by the
+// server where it can (status clamps, toggle drops) and by the target's
+// client for device-level effects (mic/cam/share stop).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ForceFlags {
+    pub muted: bool,
+    pub deafened: bool,
+    pub cam_off: bool,
+    pub share_off: bool,
+}
+
+impl ForceFlags {
+    pub(crate) fn any(&self) -> bool {
+        self.muted || self.deafened || self.cam_off || self.share_off
+    }
+}
+
+pub(crate) struct PendingKnock {
+    pub nickname: String,
+    pub tx: UserTx,
+}
+
+// Per-room admin/moderation state, keyed by room id in AppState. Lives
+// exactly as long as the room: every room-removal path also removes
+// this entry, which is what invalidates the creator key, the ban list
+// and the lobby/stage configuration when the call fully expires.
+#[derive(Default)]
+pub(crate) struct RoomAdmin {
+    // HMAC of the creator key under the server boot secret. The key
+    // itself is only ever held by the creator's browser (localStorage).
+    pub key_hash: Option<String>,
+    pub creator_id: Option<String>,
+    pub admins: HashSet<String>,
+    pub banned: HashSet<String>,
+    pub lobby: bool,
+    pub kind: RoomKind,
+    // Stage rooms: non-admin users allowed to speak/present.
+    pub speakers: HashSet<String>,
+    pub forced: HashMap<String, ForceFlags>,
+    // Lobby: connections parked before join, and one-shot approvals.
+    pub pending: HashMap<String, PendingKnock>,
+    pub approved: HashSet<String>,
+}
+
+impl RoomAdmin {
+    pub(crate) fn is_admin(&self, user_id: &str) -> bool {
+        self.admins.contains(user_id)
+    }
+
+    pub(crate) fn can_speak(&self, user_id: &str) -> bool {
+        self.kind == RoomKind::Regular
+            || self.admins.contains(user_id)
+            || self.speakers.contains(user_id)
+    }
+
+    // The role state shared with every client (and, in distributed
+    // mode, with the other nodes). Never includes the key hash, the
+    // pending knock connections, or approvals.
+    pub(crate) fn public_state(&self) -> serde_json::Value {
+        serde_json::json!({
+            "creatorId": self.creator_id,
+            "admins": self.admins.iter().collect::<Vec<_>>(),
+            "banned": self.banned.iter().collect::<Vec<_>>(),
+            "lobby": self.lobby,
+            "kind": self.kind.as_str(),
+            "speakers": self.speakers.iter().collect::<Vec<_>>(),
+            "forced": self.forced,
+        })
+    }
+
+    // Distributed shadow sync: adopt role state published by the node
+    // that owns the room's admin actions. Key material, pending knocks
+    // and approvals are node-local and never overwritten here.
+    pub(crate) fn apply_public_state(&mut self, data: &serde_json::Value) {
+        if let Some(creator) = data.get("creatorId").and_then(|v| v.as_str()) {
+            self.creator_id = Some(creator.to_string());
+        }
+        let read_set = |key: &str| -> HashSet<String> {
+            data.get(key)
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        self.admins = read_set("admins");
+        self.banned = read_set("banned");
+        self.speakers = read_set("speakers");
+        if let Some(lobby) = data.get("lobby").and_then(|v| v.as_bool()) {
+            self.lobby = lobby;
+        }
+        if let Some(kind) = data.get("kind").and_then(|v| v.as_str()) {
+            self.kind = RoomKind::from_str(kind);
+        }
+        if let Some(forced) = data.get("forced") {
+            self.forced = serde_json::from_value(forced.clone()).unwrap_or_default();
+        }
+    }
+}
+
+pub(crate) type AdminMap = Arc<Mutex<HashMap<String, RoomAdmin>>>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct DistributedMessage {
     #[serde(rename = "type")]
@@ -113,6 +243,10 @@ pub(crate) struct AppState {
     pub recent_distributed_msg_ids: Arc<Mutex<HashSet<String>>>,
     pub distributed_msg_history: Arc<Mutex<VecDeque<String>>>,
     pub(crate) node_id: String,
+    pub(crate) admin_rooms: AdminMap,
+    // Random per boot; signs creator keys. Rooms are in-memory only,
+    // so a restart invalidating every key matches room lifetime.
+    pub(crate) server_secret: Arc<Vec<u8>>,
 }
 
 pub(crate) fn normalize_channel_id(value: &str) -> Option<String> {

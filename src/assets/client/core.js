@@ -3048,3 +3048,220 @@
                 });
             }
         } catch (e) {}
+
+        // ---- Room admin, lobby, stage ----
+        // The server owns this state; admin-update messages replace it
+        // wholesale and every render reads from here.
+        let roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, kind: 'regular', speakers: [], forced: {} };
+        let myForceFlags = { muted: false, deafened: false, camOff: false, shareOff: false };
+        let pendingKnocks = [];
+        let createRoomTypeChoice = 'regular';
+        let knockDeniedFlag = false;
+
+        function getStoredAdminKey() {
+            try { return localStorage.getItem('rustrooms_admin_' + roomId) || null; } catch (e) { return null; }
+        }
+        function storeAdminKey(key) {
+            try { localStorage.setItem('rustrooms_admin_' + roomId, key); } catch (e) {}
+        }
+        function getCreateOpts() {
+            try { return JSON.parse(sessionStorage.getItem('rustrooms_create_opts') || 'null'); } catch (e) { return null; }
+        }
+        function isAdminId(uid) { return !!uid && roomAdminState.admins.includes(uid); }
+        function isCreatorId(uid) { return !!uid && roomAdminState.creatorId === uid; }
+        function iAmAdmin() { return isAdminId(persistentUserId); }
+        function canSpeakId(uid) {
+            return roomAdminState.kind !== 'stage' || isAdminId(uid) || roomAdminState.speakers.includes(uid);
+        }
+        function sendAdminAction(action, userId) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'admin-action', data: { action, userId } }));
+            }
+        }
+
+        let modToastTimer = null;
+        function showModNotice(text) {
+            const toast = document.getElementById('modToast');
+            if (!toast) return;
+            toast.textContent = text;
+            toast.style.display = 'block';
+            if (modToastTimer) clearTimeout(modToastTimer);
+            modToastTimer = setTimeout(() => { toast.style.display = 'none'; }, 4200);
+        }
+
+        function micIsOn() { const t = localStream && localStream.getAudioTracks()[0]; return !!(t && t.enabled); }
+        function camIsOn() { const t = localStream && localStream.getVideoTracks()[0]; return !!(t && t.enabled); }
+
+        function applyAdminState(data) {
+            if (!data) return;
+            roomAdminState = {
+                creatorId: data.creatorId || null,
+                admins: data.admins || [],
+                banned: data.banned || [],
+                lobby: !!data.lobby,
+                kind: data.kind || 'regular',
+                speakers: data.speakers || [],
+                forced: data.forced || {}
+            };
+            applyStageRole();
+            enforceAudienceAudio();
+            if (typeof updateRoomListUI === 'function') updateRoomListUI();
+            renderKnocks();
+        }
+
+        function updateStageBadge() {
+            const badge = document.getElementById('stageBadge');
+            if (!badge) return;
+            if (roomAdminState.kind === 'stage') {
+                badge.style.display = '';
+                badge.textContent = canSpeakId(persistentUserId) ? 'Stage · On stage' : 'Stage · Audience';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        function applyStageRole() {
+            if (roomAdminState.kind === 'stage' && !canSpeakId(persistentUserId)) {
+                if (micIsOn()) toggleMic();
+                if (camIsOn()) toggleCam();
+                if (screenStream) toggleScreen();
+            }
+            applyControlLocks();
+            updateStageBadge();
+        }
+
+        function applyForceStates() {
+            if (myForceFlags.muted && micIsOn()) toggleMic();
+            if (myForceFlags.deafened && !isDeafened) toggleDeafen();
+            if (myForceFlags.camOff && camIsOn()) toggleCam();
+            if (myForceFlags.shareOff && screenStream) toggleScreen();
+            applyControlLocks();
+        }
+
+        function applyControlLocks() {
+            const stageLocked = roomAdminState.kind === 'stage' && !canSpeakId(persistentUserId);
+            const lock = (id, locked, title) => {
+                const b = document.getElementById(id);
+                if (!b) return;
+                if (b.dataset.origTitle === undefined) b.dataset.origTitle = b.title || '';
+                b.disabled = !!locked;
+                b.classList.toggle('ctrl-locked', !!locked);
+                b.title = locked ? title : b.dataset.origTitle;
+            };
+            lock('btnMic', stageLocked || myForceFlags.muted, stageLocked ? "You're in the audience" : 'Muted by an admin');
+            lock('btnDeafen', myForceFlags.deafened, 'Deafened by an admin');
+            lock('btnCam', stageLocked || myForceFlags.camOff, stageLocked ? "You're in the audience" : 'Camera turned off by an admin');
+            lock('btnShare', stageLocked || myForceFlags.shareOff, stageLocked ? "You're in the audience" : 'Screen share turned off by an admin');
+        }
+
+        function applyModAction(data) {
+            if (!data) return;
+            const by = data.by || 'An admin';
+            switch (data.action) {
+                case 'mute': myForceFlags.muted = true; showModNotice(by + ' muted you'); break;
+                case 'unmute': myForceFlags.muted = false; showModNotice(by + ' removed your server mute'); break;
+                case 'deafen': myForceFlags.deafened = true; showModNotice(by + ' deafened you'); break;
+                case 'undeafen': myForceFlags.deafened = false; showModNotice(by + ' removed your deafen'); break;
+                case 'cam-off': myForceFlags.camOff = true; showModNotice(by + ' turned your camera off'); break;
+                case 'cam-on': myForceFlags.camOff = false; showModNotice(by + ' allowed your camera again'); break;
+                case 'share-off': myForceFlags.shareOff = true; showModNotice(by + ' stopped your screen share'); break;
+                case 'share-on': myForceFlags.shareOff = false; showModNotice(by + ' allowed screen sharing again'); break;
+            }
+            applyForceStates();
+        }
+
+        // Peers must never hear a stage audience member, even if that
+        // member's client misbehaves: their audio element stays muted
+        // locally until they are moved onto the stage.
+        function enforceAudienceAudio() {
+            document.querySelectorAll('[id^="vid-"]').forEach(el => {
+                const uid = el.id.slice(4);
+                if (!uid || uid === persistentUserId) return;
+                const forceMuted = !!(roomAdminState.forced[uid] && roomAdminState.forced[uid].muted);
+                if ((roomAdminState.kind === 'stage' && !canSpeakId(uid)) || forceMuted) {
+                    el.dataset.audienceMuted = '1';
+                    el.muted = true;
+                } else if (el.dataset.audienceMuted) {
+                    delete el.dataset.audienceMuted;
+                    el.muted = false;
+                }
+            });
+        }
+
+        function renderKnocks() {
+            const panel = document.getElementById('knockPanel');
+            const list = document.getElementById('knockList');
+            const count = document.getElementById('knockCount');
+            if (!panel || !list) return;
+            if (!iAmAdmin() || pendingKnocks.length === 0) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = '';
+            if (count) count.textContent = pendingKnocks.length;
+            list.innerHTML = pendingKnocks.map(k => `
+                <div class="knock-row">
+                    <span class="knock-name">${escapeHtml(k.nickname || 'Guest')}</span>
+                    <button class="knock-btn approve" onclick="respondKnock('${k.id}', true)">Let in</button>
+                    <button class="knock-btn deny" onclick="respondKnock('${k.id}', false)">Deny</button>
+                </div>`).join('');
+        }
+
+        function respondKnock(userId, approve) {
+            sendAdminAction(approve ? 'knock-approve' : 'knock-deny', userId);
+            pendingKnocks = pendingKnocks.filter(k => k.id !== userId);
+            renderKnocks();
+        }
+
+        function showKnockWaiting(denied) {
+            const el = document.getElementById('knockWaiting');
+            if (!el) return;
+            document.getElementById('knockWaitingTitle').textContent = denied ? 'Request denied' : 'Waiting to be let in';
+            document.getElementById('knockWaitingText').textContent = denied
+                ? 'An admin declined your request to join this room.'
+                : "This room has a lobby, so an admin needs to approve your request. You'll join automatically once they do.";
+            document.getElementById('knockSpinner').style.display = denied ? 'none' : '';
+            const btn = document.getElementById('knockWaitingBtn');
+            btn.textContent = denied ? 'Back to setup' : 'Cancel request';
+            btn.onclick = denied ? hideKnockWaiting : cancelKnock;
+            el.style.display = 'flex';
+        }
+        function hideKnockWaiting() {
+            const el = document.getElementById('knockWaiting');
+            if (el) el.style.display = 'none';
+        }
+        function cancelKnock() {
+            knockDeniedFlag = true;
+            hasLeftRoom = true;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                try { ws.send(JSON.stringify({ type: 'knock-cancel' })); } catch (e) {}
+                try { ws.close(); } catch (e) {}
+            }
+            hideKnockWaiting();
+        }
+
+        // ---- Create-room menu (shown after Start Call, before setup) ----
+        function openCreateRoomMenu() {
+            selectCreateType(createRoomTypeChoice || 'regular');
+            const modal = document.getElementById('createRoomModal');
+            if (modal) modal.classList.add('open');
+        }
+        function closeCreateRoomMenu() { animateModalClose('createRoomModal'); }
+        function selectCreateType(type) {
+            createRoomTypeChoice = type;
+            const regular = document.getElementById('createTypeRegular');
+            const stage = document.getElementById('createTypeStage');
+            if (regular) regular.classList.toggle('selected', type === 'regular');
+            if (stage) stage.classList.toggle('selected', type === 'stage');
+        }
+        function confirmCreateRoom() {
+            const lobbyToggle = document.getElementById('createLobbyToggle');
+            try {
+                sessionStorage.setItem('rustrooms_create_opts', JSON.stringify({
+                    type: createRoomTypeChoice,
+                    lobby: !!(lobbyToggle && lobbyToggle.checked)
+                }));
+            } catch (e) {}
+            closeCreateRoomMenu();
+            createRoom();
+        }

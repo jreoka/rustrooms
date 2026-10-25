@@ -53,6 +53,7 @@ pub(crate) async fn handle_socket(
 
     let mut user_id = String::new();
     let mut is_joined = false;
+    let mut is_pending_knock = false;
     let mut message_window_started = std::time::Instant::now();
     let mut messages_in_window = 0u32;
     let mut bytes_in_window = 0usize;
@@ -121,7 +122,7 @@ pub(crate) async fn handle_socket(
     });
 
     loop {
-        let next_message = if is_joined {
+        let next_message = if is_joined || is_pending_knock {
             tokio::select! {
                 message = user_ws_rx.next() => message,
                 _ = &mut inactivity_rx => None,
@@ -184,6 +185,10 @@ pub(crate) async fn handle_socket(
                             }))));
                             break;
                         }
+                    }
+
+                    if is_pending_knock && parsed.msg_type == "knock-cancel" {
+                        break;
                     }
 
                     if parsed.msg_type == "ping" {
@@ -320,6 +325,27 @@ pub(crate) async fn handle_socket(
                                 .and_then(|v| v.as_u64())
                                 .unwrap_or(0);
 
+                            let admin_key = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("adminKey"))
+                                .and_then(|v| v.as_str())
+                                .filter(|k| k.len() <= 256)
+                                .map(|k| k.to_string());
+                            let want_lobby = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("lobby"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let want_kind = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("roomType"))
+                                .and_then(|v| v.as_str())
+                                .map(RoomKind::from_str)
+                                .unwrap_or_default();
+
                             if avatar.is_none() {
                                 is_gif = false;
                                 static_frame = None;
@@ -331,7 +357,21 @@ pub(crate) async fn handle_socket(
                             // the client's fresh profile or the server's kept
                             // copy on a stale reconnect); announced to other
                             // instances and echoed back via existing-users.
-                            let joined_status;
+                            let mut joined_status = UserStatus {
+                                nickname: String::new(),
+                                avatar: None,
+                                is_gif: false,
+                                static_frame: None,
+                                is_muted: false,
+                                is_deafened: false,
+                                is_screen_sharing: false,
+                                is_low_bandwidth_mode: false,
+                                is_mobile: false,
+                                profile_rev: 0,
+                            };
+                            let mut issued_admin_key: Option<String> = None;
+                            let mut park_for_knock = false;
+                            let mut admin_state_changed = false;
                             {
                                 let room_needs_password = {
                                     let exists_locally = rooms.lock().await.contains_key(&room_id);
@@ -379,11 +419,29 @@ pub(crate) async fn handle_socket(
                                     .map(|channel| channel.keys().cloned().collect())
                                     .unwrap_or_default();
 
+                                let remote_member = {
+                                    let rl = remote_users.lock().await;
+                                    rl.get(&room_id)
+                                        .map(|room| {
+                                            room.values().any(|c| c.contains_key(&user_id))
+                                        })
+                                        .unwrap_or(false)
+                                };
+                                let room_preexisting = remote_member
+                                    || rooms
+                                        .lock()
+                                        .await
+                                        .get(&room_id)
+                                        .map(|r| r.values().any(|c| !c.is_empty()))
+                                        .unwrap_or(false);
+
                                 let mut rooms_lock = rooms.lock().await;
 
                                 let room = rooms_lock
                                     .entry(room_id.clone())
                                     .or_insert_with(HashMap::new);
+                                let already_member = remote_member
+                                    || room.values().any(|c| c.contains_key(&user_id));
                                 room.entry("General".to_string())
                                     .or_insert_with(HashMap::new);
                                 let channel =
@@ -394,47 +452,148 @@ pub(crate) async fn handle_socket(
                                         || occupied_remote_ids.contains(candidate)
                                 });
 
+                                // ---- Admin gate: creator creation, bans, lobby ----
                                 {
-                                    let mut times = state.channel_creation_times.lock().await;
-                                    let room_times =
-                                        times.entry(room_id.clone()).or_insert_with(HashMap::new);
-                                    room_times
-                                        .entry("General".to_string())
-                                        .or_insert_with(current_unix_secs);
-                                    room_times
-                                        .entry(channel_id.clone())
-                                        .or_insert_with(current_unix_secs);
+                                    let mut admins_lock = state.admin_rooms.lock().await;
+                                    let admin_state =
+                                        admins_lock.entry(room_id.clone()).or_default();
+                                    if admin_state.creator_id.is_none() && !room_preexisting {
+                                        // This join creates the room: the joiner
+                                        // becomes its creator and is issued the
+                                        // signed key their browser will keep.
+                                        let key = crate::admin::issue_key();
+                                        admin_state.key_hash = Some(crate::admin::key_hash(
+                                            &state.server_secret,
+                                            &room_id,
+                                            &key,
+                                        ));
+                                        admin_state.creator_id = Some(user_id.clone());
+                                        admin_state.admins.insert(user_id.clone());
+                                        admin_state.lobby = want_lobby;
+                                        admin_state.kind = want_kind;
+                                        issued_admin_key = Some(key);
+                                        admin_state_changed = true;
+                                    }
+                                    if admin_state.banned.contains(&user_id) {
+                                        let error_msg = crate::admin::error_text(
+                                            "BANNED",
+                                            "You are banned from this room.",
+                                        );
+                                        let _ = tx.send(Ok(Message::Text(error_msg.into()))).await;
+                                        tokio::time::sleep(std::time::Duration::from_millis(500))
+                                            .await;
+                                        return;
+                                    }
+                                    let key_ok = admin_key
+                                        .as_deref()
+                                        .zip(admin_state.key_hash.as_deref())
+                                        .map(|(k, h)| {
+                                            crate::admin::verify_key(
+                                                &state.server_secret,
+                                                &room_id,
+                                                k,
+                                                h,
+                                            )
+                                        })
+                                        .unwrap_or(false);
+                                    if key_ok {
+                                        // The creator is back: their current
+                                        // identity becomes the creator id.
+                                        admin_state.creator_id = Some(user_id.clone());
+                                        admin_state.admins.insert(user_id.clone());
+                                        admin_state_changed = true;
+                                    }
+                                    let bypass_lobby = key_ok
+                                        || admin_state.is_admin(&user_id)
+                                        || already_member
+                                        || admin_state.approved.remove(&user_id);
+                                    if admin_state.lobby && !bypass_lobby {
+                                        admin_state.pending.insert(
+                                            user_id.clone(),
+                                            PendingKnock {
+                                                nickname: nickname.clone(),
+                                                tx: tx.clone(),
+                                            },
+                                        );
+                                        park_for_knock = true;
+                                    }
                                 }
 
-                                // If this identity already has a stored status in
-                                // the channel (a reconnect: the old socket's
-                                // death hasn't been noticed yet), the server's
-                                // copy wins unless the client provably saved
-                                // something newer (profileRev). Otherwise a
-                                // client that lost its local storage (frozen tab
-                                // killed by iOS) would rejoin as "Guest" and
-                                // clobber the name everyone else still sees.
-                                // The client reconciles by adopting the status
-                                // echoed back in existing-users.
-                                let client_status = UserStatus {
-                                    nickname: nickname.clone(),
-                                    avatar: avatar.clone(),
-                                    is_gif,
-                                    static_frame: static_frame.clone(),
-                                    is_muted,
-                                    is_deafened,
-                                    is_screen_sharing,
-                                    is_low_bandwidth_mode,
-                                    is_mobile,
-                                    profile_rev,
-                                };
-                                joined_status = reconcile_join_status(
-                                    channel.get(&user_id).map(|(_, status)| status),
-                                    client_status,
-                                );
+                                if !park_for_knock {
+                                    {
+                                        let mut times = state.channel_creation_times.lock().await;
+                                        let room_times =
+                                            times.entry(room_id.clone()).or_insert_with(HashMap::new);
+                                        room_times
+                                            .entry("General".to_string())
+                                            .or_insert_with(current_unix_secs);
+                                        room_times
+                                            .entry(channel_id.clone())
+                                            .or_insert_with(current_unix_secs);
+                                    }
 
-                                channel
-                                    .insert(user_id.clone(), (tx.clone(), joined_status.clone()));
+                                    // If this identity already has a stored status in
+                                    // the channel (a reconnect: the old socket's
+                                    // death hasn't been noticed yet), the server's
+                                    // copy wins unless the client provably saved
+                                    // something newer (profileRev). Otherwise a
+                                    // client that lost its local storage (frozen tab
+                                    // killed by iOS) would rejoin as "Guest" and
+                                    // clobber the name everyone else still sees.
+                                    // The client reconciles by adopting the status
+                                    // echoed back in existing-users.
+                                    let client_status = UserStatus {
+                                        nickname: nickname.clone(),
+                                        avatar: avatar.clone(),
+                                        is_gif,
+                                        static_frame: static_frame.clone(),
+                                        is_muted,
+                                        is_deafened,
+                                        is_screen_sharing,
+                                        is_low_bandwidth_mode,
+                                        is_mobile,
+                                        profile_rev,
+                                    };
+                                    joined_status = reconcile_join_status(
+                                        channel.get(&user_id).map(|(_, status)| status),
+                                        client_status,
+                                    );
+
+                                    {
+                                        let mut status = joined_status.clone();
+                                        let admins_lock = state.admin_rooms.lock().await;
+                                        if let Some(a) = admins_lock.get(&room_id) {
+                                            if a.kind == RoomKind::Stage && !a.can_speak(&user_id) {
+                                                status.is_muted = true;
+                                                status.is_screen_sharing = false;
+                                            }
+                                            if let Some(f) = a.forced.get(&user_id) {
+                                                if f.muted {
+                                                    status.is_muted = true;
+                                                }
+                                                if f.deafened {
+                                                    status.is_deafened = true;
+                                                }
+                                                if f.share_off {
+                                                    status.is_screen_sharing = false;
+                                                }
+                                            }
+                                        }
+                                        joined_status = status;
+                                    }
+
+                                    channel
+                                        .insert(user_id.clone(), (tx.clone(), joined_status.clone()));
+                                }
+                            }
+
+                            if park_for_knock {
+                                let waiting =
+                                    crate::admin::signal_text("knock-waiting", None, None);
+                                let _ = tx.try_send(Ok(Message::Text(waiting.into())));
+                                crate::admin::send_knock_update(&state, &room_id).await;
+                                is_pending_knock = true;
+                                continue;
                             }
 
                             if room_cleanup_generations
@@ -459,6 +618,42 @@ pub(crate) async fn handle_socket(
                             })
                             .unwrap();
                             let _ = tx.try_send(Ok(Message::Text(joined_msg.into())));
+
+                            if let Some(key) = issued_admin_key.take() {
+                                let key_msg = crate::admin::signal_text(
+                                    "admin-key",
+                                    None,
+                                    Some(serde_json::json!({ "key": key })),
+                                );
+                                let _ = tx.try_send(Ok(Message::Text(key_msg.into())));
+                            }
+                            crate::admin::send_admin_update_to(&state, &room_id, &tx).await;
+                            {
+                                let (is_admin, forced) = {
+                                    let lock = state.admin_rooms.lock().await;
+                                    lock.get(&room_id)
+                                        .map(|a| {
+                                            (a.is_admin(&user_id), a.forced.get(&user_id).copied())
+                                        })
+                                        .unwrap_or((false, None))
+                                };
+                                if is_admin {
+                                    crate::admin::send_knock_update(&state, &room_id).await;
+                                }
+                                if let Some(flags) = forced
+                                    && flags.any()
+                                {
+                                    let msg = crate::admin::signal_text(
+                                        "mod-state",
+                                        None,
+                                        Some(serde_json::json!({ "forced": flags })),
+                                    );
+                                    let _ = tx.try_send(Ok(Message::Text(msg.into())));
+                                }
+                            }
+                            if admin_state_changed {
+                                crate::admin::broadcast_admin_update(&state, &room_id).await;
+                            }
 
                             {
                                 let mut existing_users: Vec<serde_json::Value> = Vec::new();
@@ -726,6 +921,28 @@ pub(crate) async fn handle_socket(
                                             }
                                             status.profile_rev = data_rev.max(status.profile_rev);
                                         }
+                                        {
+                                            let admins_lock = state.admin_rooms.lock().await;
+                                            if let Some(a) = admins_lock.get(&room_id) {
+                                                if a.kind == RoomKind::Stage
+                                                    && !a.can_speak(&user_id)
+                                                {
+                                                    status.is_muted = true;
+                                                    status.is_screen_sharing = false;
+                                                }
+                                                if let Some(f) = a.forced.get(&user_id) {
+                                                    if f.muted {
+                                                        status.is_muted = true;
+                                                    }
+                                                    if f.deafened {
+                                                        status.is_deafened = true;
+                                                    }
+                                                    if f.share_off {
+                                                        status.is_screen_sharing = false;
+                                                    }
+                                                }
+                                            }
+                                        }
                                         // Only propagate when something actually changed,
                                         // so spammy same-value updates don't trigger a
                                         // room-list rebuild and distributed broadcast.
@@ -784,9 +1001,32 @@ pub(crate) async fn handle_socket(
                                 .await;
                             }
                         } else if parsed.msg_type == "cam-toggle" {
+                            // Stage audience and force-camera-off users may
+                            // turn their camera off but never on.
+                            let enabling = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("enabled"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let cam_blocked = if enabling {
+                                let admins_lock = state.admin_rooms.lock().await;
+                                admins_lock
+                                    .get(&room_id)
+                                    .map(|a| {
+                                        (a.kind == RoomKind::Stage && !a.can_speak(&user_id))
+                                            || a.forced
+                                                .get(&user_id)
+                                                .map(|f| f.cam_off)
+                                                .unwrap_or(false)
+                                    })
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            };
                             // Distributed payloads are amplified to every room member and
                             // every instance, so reject oversized ones.
-                            if text.len() <= MAX_DISTRIBUTED_DATA_LEN {
+                            if !cam_blocked && text.len() <= MAX_DISTRIBUTED_DATA_LEN {
                                 let rooms_lock = rooms.lock().await;
                                 if let Some(room) = rooms_lock.get(&room_id)
                                     && let Some(channel) = room.get(&channel_id)
@@ -823,7 +1063,28 @@ pub(crate) async fn handle_socket(
                                 .await;
                             }
                         } else if parsed.msg_type == "screen-toggle" {
-                            if text.len() <= MAX_DISTRIBUTED_DATA_LEN {
+                            let enabling = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("enabled"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let screen_blocked = if enabling {
+                                let admins_lock = state.admin_rooms.lock().await;
+                                admins_lock
+                                    .get(&room_id)
+                                    .map(|a| {
+                                        (a.kind == RoomKind::Stage && !a.can_speak(&user_id))
+                                            || a.forced
+                                                .get(&user_id)
+                                                .map(|f| f.share_off)
+                                                .unwrap_or(false)
+                                    })
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            };
+                            if !screen_blocked && text.len() <= MAX_DISTRIBUTED_DATA_LEN {
                                 {
                                     let mut rooms_lock = rooms.lock().await;
                                     if let Some(room) = rooms_lock.get_mut(&room_id)
@@ -880,6 +1141,21 @@ pub(crate) async fn handle_socket(
                                 .await;
                             }
                         } else if parsed.msg_type == "kick-user" {
+                            let actor_is_admin = {
+                                let lock = state.admin_rooms.lock().await;
+                                lock.get(&room_id)
+                                    .map(|a| a.is_admin(&user_id))
+                                    .unwrap_or(false)
+                            };
+                            if !actor_is_admin {
+                                let error_msg = crate::admin::error_text(
+                                    "NOT_ADMIN",
+                                    "Only admins can kick users.",
+                                );
+                                let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
+                                continue;
+                            }
+
                             let target_user_id = parsed
                                 .data
                                 .as_ref()
@@ -1043,6 +1319,391 @@ pub(crate) async fn handle_socket(
                                         .await;
                                     }
                                 }
+                            }
+                        } else if parsed.msg_type == "admin-action" {
+                            let action = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("action"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let target = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("userId"))
+                                .and_then(|v| v.as_str())
+                                .map(|v| v.to_string());
+                            let actor_is_admin = {
+                                let lock = state.admin_rooms.lock().await;
+                                lock.get(&room_id)
+                                    .map(|a| a.is_admin(&user_id))
+                                    .unwrap_or(false)
+                            };
+                            if !actor_is_admin {
+                                let error_msg = crate::admin::error_text(
+                                    "NOT_ADMIN",
+                                    "Only admins can do that.",
+                                );
+                                let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
+                                continue;
+                            }
+                            let Some(target) = target else { continue };
+
+                            match action.as_str() {
+                                "promote" | "demote" | "to-stage" | "to-audience" => {
+                                    let mut refusal: Option<(&str, &str)> = None;
+                                    let mut changed = false;
+                                    {
+                                        let mut lock = state.admin_rooms.lock().await;
+                                        if let Some(a) = lock.get_mut(&room_id) {
+                                            match action.as_str() {
+                                                "promote" => {
+                                                    changed = a.admins.insert(target.clone());
+                                                }
+                                                "demote" => {
+                                                    if a.creator_id.as_deref()
+                                                        == Some(target.as_str())
+                                                    {
+                                                        refusal = Some((
+                                                            "CANNOT_DEMOTE_CREATOR",
+                                                            "The room creator cannot be demoted.",
+                                                        ));
+                                                    } else {
+                                                        changed =
+                                                            a.admins.remove(&target);
+                                                    }
+                                                }
+                                                "to-stage" => {
+                                                    changed =
+                                                        a.speakers.insert(target.clone());
+                                                }
+                                                "to-audience" => {
+                                                    if a.is_admin(&target) {
+                                                        refusal = Some((
+                                                            "MUST_DEMOTE_FIRST",
+                                                            "Demote this admin before moving them to the audience.",
+                                                        ));
+                                                    } else {
+                                                        changed =
+                                                            a.speakers.remove(&target);
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    if let Some((code, message)) = refusal {
+                                        let error_msg =
+                                            crate::admin::error_text(code, message);
+                                        let _ =
+                                            tx.try_send(Ok(Message::Text(error_msg.into())));
+                                        continue;
+                                    }
+                                    if changed {
+                                        crate::admin::broadcast_admin_update(&state, &room_id)
+                                            .await;
+                                    }
+                                    if action == "to-audience" {
+                                        // Silence the demoted user's stored
+                                        // status immediately; their client
+                                        // also self-mutes on admin-update.
+                                        let mut updated_status = None;
+                                        {
+                                            let mut rooms_lock = rooms.lock().await;
+                                            if let Some(room) = rooms_lock.get_mut(&room_id) {
+                                                for (_, channel) in room.iter_mut() {
+                                                    if let Some((_, status)) =
+                                                        channel.get_mut(&target)
+                                                    {
+                                                        status.is_muted = true;
+                                                        status.is_screen_sharing = false;
+                                                        updated_status =
+                                                            Some(status.clone());
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if let Some(status) = &updated_status {
+                                                let notify_msg =
+                                                    serde_json::to_string(&SignalMessage {
+                                                        msg_type: "user-update".into(),
+                                                        user_id: Some(target.clone()),
+                                                        target: None,
+                                                        data: Some(
+                                                            serde_json::to_value(status)
+                                                                .unwrap(),
+                                                        ),
+                                                    })
+                                                    .unwrap();
+                                                if let Some(room) = rooms_lock.get(&room_id) {
+                                                    for (_, channel) in room.iter() {
+                                                        for (_, (tx, _)) in channel.iter() {
+                                                            let _ = tx.try_send(Ok(
+                                                                Message::Text(
+                                                                    notify_msg.clone().into(),
+                                                                ),
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(status) = updated_status {
+                                            distributed_broadcast(
+                                                &state,
+                                                &DistributedMessage {
+                                                    msg_type: "user-update".into(),
+                                                    room_id: room_id.clone(),
+                                                    channel_id: channel_id.clone(),
+                                                    user_id: target.clone(),
+                                                    msg_id: Uuid::new_v4().to_string(),
+                                                    status: Some(status),
+                                                    data: None,
+                                                    signal_msg: None,
+                                                },
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                "mute" | "unmute" | "deafen" | "undeafen" | "cam-off"
+                                | "cam-on" | "share-off" | "share-on" => {
+                                    {
+                                        let mut lock = state.admin_rooms.lock().await;
+                                        if let Some(a) = lock.get_mut(&room_id) {
+                                            let flags =
+                                                a.forced.entry(target.clone()).or_default();
+                                            match action.as_str() {
+                                                "mute" => flags.muted = true,
+                                                "unmute" => flags.muted = false,
+                                                "deafen" => flags.deafened = true,
+                                                "undeafen" => flags.deafened = false,
+                                                "cam-off" => flags.cam_off = true,
+                                                "cam-on" => flags.cam_off = false,
+                                                "share-off" => flags.share_off = true,
+                                                "share-on" => flags.share_off = false,
+                                                _ => {}
+                                            }
+                                            if !flags.any() {
+                                                a.forced.remove(&target);
+                                            }
+                                        }
+                                    }
+                                    let by_name = {
+                                        let rooms_lock = rooms.lock().await;
+                                        rooms_lock
+                                            .get(&room_id)
+                                            .and_then(|room| room.get(&channel_id))
+                                            .and_then(|channel| channel.get(&user_id))
+                                            .map(|(_, status)| status.nickname.clone())
+                                            .unwrap_or_else(|| "An admin".to_string())
+                                    };
+                                    let text = crate::admin::signal_text(
+                                        "mod-action",
+                                        Some(target.clone()),
+                                        Some(serde_json::json!({
+                                            "action": action,
+                                            "by": by_name
+                                        })),
+                                    );
+                                    let delivered = {
+                                        let rooms_lock = rooms.lock().await;
+                                        let mut delivered = false;
+                                        if let Some(room) = rooms_lock.get(&room_id) {
+                                            for (_, channel) in room.iter() {
+                                                if let Some((target_tx, _)) =
+                                                    channel.get(&target)
+                                                {
+                                                    let _ = target_tx.try_send(Ok(
+                                                        Message::Text(text.clone().into()),
+                                                    ));
+                                                    delivered = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        delivered
+                                    };
+                                    if !delivered {
+                                        distributed_broadcast(
+                                            &state,
+                                            &DistributedMessage {
+                                                msg_type: "mod-action".into(),
+                                                room_id: room_id.clone(),
+                                                channel_id: channel_id.clone(),
+                                                user_id: target.clone(),
+                                                msg_id: Uuid::new_v4().to_string(),
+                                                status: None,
+                                                data: None,
+                                                signal_msg: Some(text),
+                                            },
+                                        )
+                                        .await;
+                                    }
+                                    crate::admin::broadcast_admin_update(&state, &room_id).await;
+                                }
+                                "ban" => {
+                                    let is_creator = {
+                                        let lock = state.admin_rooms.lock().await;
+                                        lock.get(&room_id)
+                                            .map(|a| {
+                                                a.creator_id.as_deref() == Some(target.as_str())
+                                            })
+                                            .unwrap_or(false)
+                                    };
+                                    if target == user_id || is_creator {
+                                        let error_msg = crate::admin::error_text(
+                                            "CANNOT_BAN",
+                                            "You cannot ban yourself or the room creator.",
+                                        );
+                                        let _ =
+                                            tx.try_send(Ok(Message::Text(error_msg.into())));
+                                        continue;
+                                    }
+                                    {
+                                        let mut lock = state.admin_rooms.lock().await;
+                                        if let Some(a) = lock.get_mut(&room_id) {
+                                            a.banned.insert(target.clone());
+                                            a.admins.remove(&target);
+                                            a.speakers.remove(&target);
+                                            a.forced.remove(&target);
+                                        }
+                                    }
+                                    let notify = crate::admin::signal_text(
+                                        "user-banned",
+                                        Some(target.clone()),
+                                        None,
+                                    );
+                                    let mut victim_tx = None;
+                                    let mut victim_channel = channel_id.clone();
+                                    {
+                                        let mut rooms_lock = rooms.lock().await;
+                                        if let Some(room) = rooms_lock.get_mut(&room_id) {
+                                            for (ch, channel) in room.iter_mut() {
+                                                if let Some((tx, _)) =
+                                                    channel.remove(&target)
+                                                {
+                                                    victim_tx = Some(tx);
+                                                    victim_channel = ch.clone();
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if victim_tx.is_some()
+                                            && let Some(room) = rooms_lock.get(&room_id)
+                                            && let Some(channel) =
+                                                room.get(&victim_channel)
+                                        {
+                                            for (_, (tx, _)) in channel.iter() {
+                                                let _ = tx.try_send(Ok(Message::Text(
+                                                    notify.clone().into(),
+                                                )));
+                                            }
+                                        }
+                                    }
+                                    if let Some(vtx) = victim_tx {
+                                        let _ = vtx
+                                            .try_send(Ok(Message::Text(notify.clone().into())));
+                                        let _ = vtx.try_send(Ok(Message::Close(None)));
+                                    } else {
+                                        let mut rl = remote_users.lock().await;
+                                        remove_remote_user(
+                                            &mut rl,
+                                            &room_id,
+                                            &victim_channel,
+                                            &target,
+                                        );
+                                        drop(rl);
+                                        remove_remote_user_owner(
+                                            &state.remote_user_owners,
+                                            &room_id,
+                                            &victim_channel,
+                                            &target,
+                                        )
+                                        .await;
+                                    }
+                                    distributed_broadcast(
+                                        &state,
+                                        &DistributedMessage {
+                                            msg_type: "user-banned".into(),
+                                            room_id: room_id.clone(),
+                                            channel_id: victim_channel.clone(),
+                                            user_id: target.clone(),
+                                            msg_id: Uuid::new_v4().to_string(),
+                                            status: None,
+                                            data: None,
+                                            signal_msg: None,
+                                        },
+                                    )
+                                    .await;
+                                    broadcast_channel_list(
+                                        &rooms,
+                                        &remote_users,
+                                        &state.channel_creation_times,
+                                        &room_id,
+                                    )
+                                    .await;
+                                    schedule_empty_room_cleanup(&state, &room_id).await;
+                                    crate::admin::broadcast_admin_update(&state, &room_id).await;
+                                }
+                                "knock-approve" | "knock-deny" => {
+                                    let approve = action == "knock-approve";
+                                    let pending_tx = {
+                                        let mut lock = state.admin_rooms.lock().await;
+                                        lock.get_mut(&room_id).and_then(|a| {
+                                            let removed = a.pending.remove(&target);
+                                            if approve && removed.is_some() {
+                                                a.approved.insert(target.clone());
+                                            }
+                                            removed.map(|p| p.tx)
+                                        })
+                                    };
+                                    match pending_tx {
+                                        Some(ptx) => {
+                                            if approve {
+                                                let msg = crate::admin::signal_text(
+                                                    "knock-approved",
+                                                    None,
+                                                    None,
+                                                );
+                                                let _ = ptx.try_send(Ok(Message::Text(
+                                                    msg.into(),
+                                                )));
+                                            } else {
+                                                let msg = crate::admin::signal_text(
+                                                    "knock-denied",
+                                                    None,
+                                                    None,
+                                                );
+                                                let _ = ptx.try_send(Ok(Message::Text(
+                                                    msg.into(),
+                                                )));
+                                                let _ = ptx.try_send(Ok(Message::Close(None)));
+                                            }
+                                        }
+                                        None => {
+                                            distributed_broadcast(
+                                                &state,
+                                                &DistributedMessage {
+                                                    msg_type: "knock-response".into(),
+                                                    room_id: room_id.clone(),
+                                                    channel_id: String::new(),
+                                                    user_id: target.clone(),
+                                                    msg_id: Uuid::new_v4().to_string(),
+                                                    status: None,
+                                                    data: Some(serde_json::json!({
+                                                        "approve": approve
+                                                    })),
+                                                    signal_msg: None,
+                                                },
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                    crate::admin::send_knock_update(&state, &room_id).await;
+                                }
+                                _ => {}
                             }
                         } else if parsed.msg_type == "rename-channel" {
                             let mut target_channel_id = parsed
@@ -1356,6 +2017,21 @@ pub(crate) async fn handle_socket(
         }
     }
 
+    if is_pending_knock {
+        let removed = {
+            let mut lock = state.admin_rooms.lock().await;
+            lock.get_mut(&room_id)
+                .map(|a| {
+                    a.approved.remove(&user_id);
+                    a.pending.remove(&user_id).is_some()
+                })
+                .unwrap_or(false)
+        };
+        if removed {
+            crate::admin::send_knock_update(&state, &room_id).await;
+        }
+    }
+
     // Stop the server-side ping task
     let _ = ping_shutdown_tx.send(());
 
@@ -1467,6 +2143,7 @@ pub(crate) async fn handle_socket(
         let cleanup_clone = room_cleanup_generations.clone();
         let remote_users_clone = remote_users.clone();
         let times_clone = state.channel_creation_times.clone();
+        let admin_clone = state.admin_rooms.clone();
         let room_id_clone = room_id.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS)).await;
@@ -1508,6 +2185,7 @@ pub(crate) async fn handle_socket(
 
             if removed_room {
                 times_clone.lock().await.remove(&room_id_clone);
+                admin_clone.lock().await.remove(&room_id_clone);
                 let mut cleanup_lock = cleanup_clone.lock().await;
                 if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
                     cleanup_lock.remove(&room_id_clone);
@@ -1526,6 +2204,7 @@ pub(crate) async fn handle_socket(
                     let cleanup_retry = cleanup_clone.clone();
                     let remote_retry = remote_users_clone.clone();
                     let times_retry = times_clone.clone();
+                    let admin_retry = admin_clone.clone();
                     let rid_retry = room_id_clone.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS))
@@ -1564,6 +2243,7 @@ pub(crate) async fn handle_socket(
                         };
                         if removed {
                             times_retry.lock().await.remove(&rid_retry);
+                            admin_retry.lock().await.remove(&rid_retry);
                             let mut cl = cleanup_retry.lock().await;
                             if cl.get(&rid_retry).copied() == Some(next_gen) {
                                 cl.remove(&rid_retry);

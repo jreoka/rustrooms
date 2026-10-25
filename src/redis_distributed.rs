@@ -467,7 +467,7 @@ async fn handle_envelope(
                 // Independent Redis paths can have very different latency.
                 let is_presence = matches!(
                     message.msg_type.as_str(),
-                    "user-joined" | "user-left" | "user-kicked"
+                    "user-joined" | "user-left" | "user-kicked" | "user-banned"
                 );
                 let is_channel_change = matches!(
                     message.msg_type.as_str(),
@@ -477,7 +477,7 @@ async fn handle_envelope(
                     let mut snapshots = snapshots.lock().await;
                     for ((source, _), snapshot) in snapshots.iter_mut() {
                         if is_presence {
-                            let applies = message.msg_type == "user-kicked"
+                            let applies = matches!(message.msg_type.as_str(), "user-kicked" | "user-banned")
                                 || source == &envelope.source_node_id;
                             if applies {
                                 snapshot.last_activity = Instant::now();

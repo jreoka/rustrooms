@@ -1,3 +1,4 @@
+mod admin;
 mod distributed;
 mod redis_distributed;
 mod rooms;
@@ -61,6 +62,15 @@ async fn main() {
 
     let node_id = Uuid::new_v4().to_string();
 
+    let server_secret: Arc<Vec<u8>> = Arc::new(
+        [
+            *Uuid::new_v4().as_bytes(),
+            *Uuid::new_v4().as_bytes(),
+        ]
+        .concat(),
+    );
+    let admin_rooms: AdminMap = Arc::new(Mutex::new(HashMap::new()));
+
     let state = AppState {
         rooms,
         room_cleanup_generations,
@@ -73,6 +83,8 @@ async fn main() {
         recent_distributed_msg_ids: Arc::new(Mutex::new(HashSet::new())),
         distributed_msg_history: Arc::new(Mutex::new(VecDeque::new())),
         node_id,
+        admin_rooms,
+        server_secret,
     };
 
     let app = Router::new()

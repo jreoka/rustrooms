@@ -49,6 +49,44 @@
 
             ws = new WebSocket(wsUrl);
 
+                        function sendJoinMessage() {
+                            updateStatus('connected', 'Connected');
+                            startHeartbeat();
+                            const camEnabled = localStream && localStream.getVideoTracks()[0] && localStream.getVideoTracks()[0].enabled;
+                            const screenEnabled = !!screenStream;
+                            const screenHasAudio = screenStream && screenStream.getAudioTracks().length > 0;
+                            const audioTrack = localStream && localStream.getAudioTracks()[0];
+                            const isMuted = !audioTrack || !audioTrack.enabled;
+
+                                ws.send(JSON.stringify({
+                                type: "join",
+                                data: {
+                                    userId: persistentUserId,
+                                    nickname: userNickname,
+                                    profileRev: profileRev,
+                                    adminKey: getStoredAdminKey(),
+                                    lobby: !!(getCreateOpts() && getCreateOpts().lobby),
+                                    roomType: (getCreateOpts() && getCreateOpts().type) || 'regular',
+                                    avatar: userAvatar,
+                                    isGif: userAvatarIsGif,
+                                    staticFrame: userAvatarStaticFrame,
+                                    camEnabled: camEnabled,
+                                    screenEnabled: screenEnabled,
+                                    screenAudio: screenHasAudio,
+                                    micTrackId: audioTrack ? audioTrack.id : null,
+                                    camVideoTrackId: localStream ? (localStream.getVideoTracks()[0]?.id || null) : null,
+                                    screenVideoTrackId: screenStream ? (screenStream.getVideoTracks()[0]?.id || null) : null,
+                                    screenAudioTrackId: screenStream ? (screenStream.getAudioTracks()[0]?.id || null) : null,
+                                    isMuted: isMuted,
+                                    isDeafened: isDeafened,
+                                    isLowBandwidthMode: isLowBandwidthMode,
+                                    isMobile: isMobileClient,
+                                    password: roomCreationPassword
+                                }
+                            }));
+                            checkEmpty();
+                        }
+
                         ws.onopen = () => {
                             if (wsConnectionId !== thisConnectionId) return; // stale connection
 
@@ -73,38 +111,10 @@
                             reconnectionAttempts = 0;
                             desktopSlowRetryCount = 0;
                             isReconnecting = false;
-                            updateStatus('connected', 'Connected');
-                            startHeartbeat();
-                            const camEnabled = localStream && localStream.getVideoTracks()[0] && localStream.getVideoTracks()[0].enabled;
-                            const screenEnabled = !!screenStream;
-                            const screenHasAudio = screenStream && screenStream.getAudioTracks().length > 0;
-                            const audioTrack = localStream && localStream.getAudioTracks()[0];
-                            const isMuted = !audioTrack || !audioTrack.enabled;
 
-                                ws.send(JSON.stringify({
-                                type: "join",
-                                data: {
-                                    userId: persistentUserId,
-                                    nickname: userNickname,
-                                    profileRev: profileRev,
-                                    avatar: userAvatar,
-                                    isGif: userAvatarIsGif,
-                                    staticFrame: userAvatarStaticFrame,
-                                    camEnabled: camEnabled,
-                                    screenEnabled: screenEnabled,
-                                    screenAudio: screenHasAudio,
-                                    micTrackId: audioTrack ? audioTrack.id : null,
-                                    camVideoTrackId: localStream ? (localStream.getVideoTracks()[0]?.id || null) : null,
-                                    screenVideoTrackId: screenStream ? (screenStream.getVideoTracks()[0]?.id || null) : null,
-                                    screenAudioTrackId: screenStream ? (screenStream.getAudioTracks()[0]?.id || null) : null,
-                                    isMuted: isMuted,
-                                    isDeafened: isDeafened,
-                                    isLowBandwidthMode: isLowBandwidthMode,
-                                    isMobile: isMobileClient,
-                                    password: roomCreationPassword
-                                }
-                            }));
-                            checkEmpty();
+                            sendJoinMessage();
+
+
                         };
 
                         ws.onmessage = async (event) => {
@@ -122,6 +132,68 @@
                                     if (msg.userId) {
                                         persistentUserId = msg.userId;
                                         localStorage.setItem('rustrooms_user_id', persistentUserId);
+                                    }
+                                    hideKnockWaiting();
+                                    break;
+                                case 'admin-key':
+                                    if (msg.data && msg.data.key) storeAdminKey(msg.data.key);
+                                    break;
+                                case 'admin-update':
+                                    applyAdminState(msg.data);
+                                    break;
+                                case 'knock-waiting':
+                                    showKnockWaiting(false);
+                                    break;
+                                case 'knock-approved':
+                                    hideKnockWaiting();
+                                    sendJoinMessage();
+                                    break;
+                                case 'knock-denied':
+                                    knockDeniedFlag = true;
+                                    hasLeftRoom = true;
+                                    showKnockWaiting(true);
+                                    break;
+                                case 'knock-update':
+                                    if (msg.data && Array.isArray(msg.data.pending)) {
+                                        const grew = msg.data.pending.length > pendingKnocks.length;
+                                        pendingKnocks = msg.data.pending;
+                                        renderKnocks();
+                                        if (grew && iAmAdmin()) playNotificationSound('join');
+                                    }
+                                    break;
+                                case 'mod-action':
+                                    if (msg.userId === persistentUserId) applyModAction(msg.data);
+                                    break;
+                                case 'mod-state':
+                                    if (msg.data && msg.data.forced) {
+                                        myForceFlags = {
+                                            muted: !!msg.data.forced.muted,
+                                            deafened: !!msg.data.forced.deafened,
+                                            camOff: !!msg.data.forced.camOff,
+                                            shareOff: !!msg.data.forced.shareOff
+                                        };
+                                        applyForceStates();
+                                    }
+                                    break;
+                                case 'user-banned':
+                                    delete userAvatarCache[msg.userId];
+                                    if (msg.userId === persistentUserId) {
+                                        hasLeftRoom = true;
+                                        alert("You have been banned from this room.");
+                                        sessionStorage.removeItem('rustrooms_setup_done');
+                                        sessionStorage.removeItem('rustrooms_last_room_id');
+                                        sessionStorage.removeItem('rustrooms_last_channel_id');
+                                        window.location.href = "/";
+                                    } else {
+                                        playNotificationSound('leave');
+                                        removePeer(msg.userId);
+                                        delete peerCamStatus[msg.userId];
+                                        delete peerScreenStatus[msg.userId];
+                                        delete peerScreenHasAudio[msg.userId];
+                                        delete peerMicTrackId[msg.userId];
+                                        delete peerScreenAudioTrackId[msg.userId];
+                                        delete peerLowBandwidthStatus[msg.userId];
+                                        updateRoomListUI();
                                     }
                                     break;
                                 case 'error':
@@ -152,6 +224,12 @@
                                                 }
                                             });
                                         }
+                                    } else if (msg.data && msg.data.code === 'BANNED') {
+                                        hasLeftRoom = true;
+                                        alert("You are banned from this room.");
+                                        window.location.href = "/";
+                                    } else if (msg.data && ['NOT_ADMIN', 'CANNOT_DEMOTE_CREATOR', 'CANNOT_BAN', 'MUST_DEMOTE_FIRST', 'KICK_SELF'].includes(msg.data.code)) {
+                                        showModNotice(msg.data.message || "That action isn't allowed.");
                                     } else {
                                         showCustomAlert("Error", msg.data.message || "An error occurred.");
                                     }

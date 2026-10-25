@@ -665,6 +665,33 @@
                 `;
             }
 
+            if (typeof iAmAdmin === 'function' && iAmAdmin() && userId !== persistentUserId) {
+                const tCreator = isCreatorId(userId);
+                const tAdmin = isAdminId(userId);
+                const f = (roomAdminState.forced && roomAdminState.forced[userId]) || {};
+                const abtn = (action, label, danger) => `<button class="uvm-admin-btn${danger ? ' danger' : ''}" onclick="adminMenuAction('${action}', '${userId}')">${label}</button>`;
+                let adminHtml = '';
+                if (tCreator) {
+                    adminHtml = `<div class="uvm-admin-note">Room creator · Admin</div>`;
+                } else {
+                    adminHtml += abtn(tAdmin ? 'demote' : 'promote', tAdmin ? 'Demote admin' : 'Make admin');
+                    if (roomAdminState.kind === 'stage' && !tAdmin) {
+                        adminHtml += canSpeakId(userId) ? abtn('to-audience', 'Move to audience') : abtn('to-stage', 'Move to stage');
+                    }
+                    adminHtml += abtn(f.muted ? 'unmute' : 'mute', f.muted ? 'Remove server mute' : 'Server mute');
+                    adminHtml += abtn(f.deafened ? 'undeafen' : 'deafen', f.deafened ? 'Remove deafen' : 'Server deafen');
+                    adminHtml += abtn(f.camOff ? 'cam-on' : 'cam-off', f.camOff ? 'Allow camera' : 'Turn off camera');
+                    adminHtml += abtn(f.shareOff ? 'share-on' : 'share-off', f.shareOff ? 'Allow screen share' : 'Stop screen share');
+                    adminHtml += abtn('kick', 'Kick', true);
+                    adminHtml += abtn('ban', 'Ban', true);
+                }
+                html += `
+                <div class="uvm-section">
+                    <div class="uvm-label">Admin</div>
+                    <div class="uvm-admin-grid">${adminHtml}</div>
+                </div>`;
+            }
+
             menu.innerHTML = html;
             menu.dataset.userId = userId;
 
@@ -695,6 +722,26 @@
                 menu.dataset.userId = '';
             }
         }
+
+        window.adminMenuAction = function(action, userId) {
+            let nickname = 'this user';
+            for (const rid in globalRoomList) {
+                const users = (globalRoomList[rid] || {}).users || {};
+                if (users[userId]) { nickname = users[userId].nickname || nickname; break; }
+            }
+            if (action === 'kick') {
+                closeUserVolumeMenu();
+                showKickModal(userId, nickname);
+                return;
+            }
+            if (action === 'ban') {
+                closeUserVolumeMenu();
+                showCustomConfirm('Ban user', `Ban "${nickname}" from this room? They won't be able to rejoin until the call fully ends.`, () => sendAdminAction('ban', userId));
+                return;
+            }
+            sendAdminAction(action, userId);
+            closeUserVolumeMenu();
+        };
 
         window.uvmToggleMute = function(userId, type) {
             toggleMute(userId, type);
@@ -1084,6 +1131,8 @@
                 roomEl.ondrop = (e) => handleRoomDrop(e, rid);
 
                 let usersHtml = '';
+                const crownSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l4.6 6.2L21 5l-1.7 11H4.7L3 5l4.4 4.2z"/><rect x="4.7" y="18" width="14.6" height="2.2" rx="1"/></svg>`;
+                const earSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>`;
                 const users = roomInfo.users || {};
                 const userIds = Object.keys(users);
 
@@ -1109,13 +1158,15 @@
                     }
 
                     usersHtml += `
-                        <div class="room-user-row pointer-events-auto cursor-pointer" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchend="handleUserTouchEnd(event)" ontouchmove="handleUserTouchCancel()">
+                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchend="handleUserTouchEnd(event)" ontouchmove="handleUserTouchCancel()">
                             <div class="user-avatar-wrap">
                                 <div class="mini-avatar">
                                     ${avatar ? (isGif && staticFrame ? `<img src="${escapeHtml(staticFrame)}" data-gif-src="${escapeHtml(avatar)}" data-static-src="${escapeHtml(staticFrame)}">` : `<img src="${escapeHtml(avatar)}">`) : `<div class="mini-avatar-placeholder">${escapeHtml(u.nickname.charAt(0).toUpperCase())}</div>`}
                                 </div>
                             </div>
                             <span class="room-user-name">${escapeHtml(u.nickname)}</span>
+                            ${isCreatorId(uid) ? `<span class="admin-crown creator" title="Room creator · Admin">${crownSvg}</span>` : isAdminId(uid) ? `<span class="admin-crown" title="Admin">${crownSvg}</span>` : ''}
+                            ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? `<span class="audience-badge" title="Audience · listening only">${earSvg}</span>` : ''}
                             ${u.isMobile ? `<span class="device-inline" title="Connected from a mobile device"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"></rect><line x1="11" y1="18" x2="13" y2="18"></line></svg></span>` : ''}
                             <div class="status-indicators">
                                 ${isScreenSharing ? `

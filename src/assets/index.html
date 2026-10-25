@@ -41,6 +41,13 @@
             </button>
         </div>
         <div class="sidebar-content">
+            <div id="knockPanel" class="knock-panel" style="display: none;">
+                <div class="knock-panel-title">
+                    <span>Join requests</span>
+                    <span id="knockCount" class="knock-count">0</span>
+                </div>
+                <div id="knockList"></div>
+            </div>
             <div id="sidebarActions">
                 <button onclick="createNewChannel()" class="w-full btn-primary py-3 mb-6 flex items-center justify-center gap-2 font-semibold">
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -112,6 +119,37 @@
         </div>
     </div>
 
+    <div id="createRoomModal" class="modal-overlay">
+        <div class="modal-content create-room-content">
+            <h3 class="text-xl font-bold text-white">Create a room</h3>
+            <p class="create-room-sub">These settings apply because you're creating the room, and they last until the call fully ends.</p>
+            <div class="create-type-grid">
+                <button type="button" id="createTypeRegular" class="create-type-card selected" onclick="selectCreateType('regular')">
+                    <span class="create-type-title">Regular room</span>
+                    <span class="create-type-desc">Everyone can talk, use their camera and share their screen.</span>
+                </button>
+                <button type="button" id="createTypeStage" class="create-type-card" onclick="selectCreateType('stage')">
+                    <span class="create-type-title">Stage</span>
+                    <span class="create-type-desc">Admins and speakers talk. Everyone else is in the audience, listening only. Admins can move people on and off the stage.</span>
+                </button>
+            </div>
+            <div class="m3-row create-lobby-row">
+                <div class="flex flex-col">
+                    <span class="text-sm font-semibold text-white">Lobby mode</span>
+                    <span class="text-xs text-zinc-400">People who join knock first, and an admin lets them in</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
+                    <input type="checkbox" id="createLobbyToggle" class="sr-only peer">
+                    <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
+                </label>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="closeCreateRoomMenu()" class="btn-secondary flex-1 py-3 rounded-xl font-medium transition-all">Cancel</button>
+                <button onclick="confirmCreateRoom()" class="btn-primary flex-1 py-3 rounded-xl font-medium transition-all">Continue</button>
+            </div>
+        </div>
+    </div>
+
     <div id="welcomeOverlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center p-4" style="display: none; background: var(--bg-primary);">
         <div class="text-center space-y-8 max-w-md w-full relative z-10" id="welcomeContent">
             <div class="space-y-4" id="welcomeTitleContainer">
@@ -123,7 +161,7 @@
             </div>
 
             <div id="startActionContainer" class="relative min-h-[72px] flex justify-center items-center">
-                 <button id="btnStartRoom" onclick="createRoom()" class="btn-primary absolute w-full md:w-auto px-12 py-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center">
+                 <button id="btnStartRoom" onclick="openCreateRoomMenu()" class="btn-primary absolute w-full md:w-auto px-12 py-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center">
                     Start Room
                 </button>
 
@@ -289,6 +327,17 @@
         </div>
     </div>
 
+    <div id="knockWaiting" class="knock-waiting" style="display: none;">
+        <div class="knock-waiting-card">
+            <div class="knock-spinner" id="knockSpinner"></div>
+            <h3 id="knockWaitingTitle">Waiting to be let in</h3>
+            <p id="knockWaitingText">This room has a lobby, so an admin needs to approve your request. You'll join automatically once they do.</p>
+            <button id="knockWaitingBtn" class="btn-secondary" onclick="cancelKnock()">Cancel request</button>
+        </div>
+    </div>
+
+    <div id="modToast" class="mod-toast" style="display: none;"></div>
+
     <div id="settingsOverlay" class="fixed inset-0 z-[200] flex items-center justify-center p-4 hidden" style="background: var(--bg-primary);" onclick="if(event.target === this) closeSettings()">
         <div class="glass-panel p-8 md:p-10 rounded-2xl max-w-5xl w-full max-h-[95vh] overflow-y-auto relative z-10">
              <button onclick="closeSettings()" class="absolute top-6 right-6 transition-all p-2 rounded-lg hover:bg-white/10" style="color: var(--text-muted);" title="Close" aria-label="Close Settings">
@@ -390,6 +439,7 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                 </button>
                 <div id="currentChannelName" class="text-white font-semibold text-lg md:text-xl truncate min-w-0 drop-shadow-md"></div>
+                <span id="stageBadge" class="stage-badge" style="display: none;"></span>
             </div>
 
             <div class="flex items-center justify-end gap-2 md:gap-3 flex-shrink-0">
