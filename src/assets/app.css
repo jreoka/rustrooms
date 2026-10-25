@@ -14,10 +14,10 @@
     color-scheme: dark;
 
     /* ---- Core scheme ---- */
-    --md-primary: #5E6AD2;              /* the one accent */
+    --md-primary: #575EEA;              /* the one accent */
     --md-on-primary: #FFFFFF;
-    --md-primary-container: #2C3260;    /* tonal accent surface */
-    --md-on-primary-container: #C9CFF5;
+    --md-primary-container: #2E3266;    /* tonal accent surface */
+    --md-on-primary-container: #C5C9FF;
     --md-secondary: #A7AAB3;
     --md-on-secondary: #1B1C20;
     --md-secondary-container: #17171B;  /* neutral control surface */
@@ -62,7 +62,7 @@
     --text-muted: var(--md-on-surface-variant);
 
     --accent: var(--md-primary);
-    --accent-hover: #7180DC;
+    --accent-hover: #7178F4;
     --accent-glow: transparent;
     --accent-blue: var(--md-primary);
     --accent-dark-blue: var(--md-primary-container);
@@ -123,7 +123,7 @@
     color-scheme: light;
 
     --md-primary-container: #DCE0F5;
-    --md-on-primary-container: #2C3260;
+    --md-on-primary-container: #2E3266;
     --md-secondary: #5F626B;
     --md-on-secondary: #FFFFFF;
     --md-secondary-container: #E8E8EC;
@@ -147,7 +147,7 @@
     --md-surface-container-high: #EFEFF1;
     --md-surface-container-highest: #E3E3E8;
 
-    --accent-hover: #4F5CC4;
+    --accent-hover: #494FD6;
 
     --c-surface: 244 244 246;
     --c-low: 255 255 255;
