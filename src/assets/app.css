@@ -1924,3 +1924,11 @@ video.active + .avatar-layer { display: none !important; }
         animation: none;
     }
 }
+
+/* On mobile the 32px header buttons make their glyphs read large;
+   scale the hamburger and theme icons down a touch (desktop keeps
+   the sizes set in the markup). */
+@media (max-width: 767px) {
+    #sidebarToggle svg { width: 12px; height: 12px; }
+    #btnTheme svg { width: 14px; height: 14px; }
+}
