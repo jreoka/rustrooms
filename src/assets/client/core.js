@@ -3123,6 +3123,7 @@
                 sidebarActions.style.display = (roomAdminState.kind === 'stage' && !iAmAdmin()) ? 'none' : '';
             }
             if (typeof updateRoomListUI === 'function') updateRoomListUI();
+            if (typeof reconcileStageTiles === 'function') reconcileStageTiles();
             renderKnocks();
         }
 

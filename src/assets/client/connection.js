@@ -1046,15 +1046,54 @@
             }
         }
 
+        // In a stage room the main area is the stage: only participants
+        // holding a stage seat get a tile. Audience members stay in the
+        // sidebar lists and never appear here.
+        function stageTileHidden(userId) {
+            return roomAdminState.kind === 'stage' && !canSpeakId(userId);
+        }
+
+        function visibleTileCount() {
+            if (!remoteGrid) return 0;
+            let n = 0;
+            remoteGrid.querySelectorAll('.video-container').forEach(el => {
+                if (el.style.display !== 'none') n++;
+            });
+            return n;
+        }
+
+        function reconcileStageTiles() {
+            if (!remoteGrid) return;
+            remoteGrid.querySelectorAll('.video-container').forEach(el => {
+                const uid = el.dataset.userId;
+                if (uid) el.style.display = stageTileHidden(uid) ? 'none' : '';
+            });
+            checkEmpty();
+        }
+
         function checkEmpty() {
             const count = Object.keys(peers).length;
-            if (count === 0) {
+            const visible = visibleTileCount();
+            if (visible === 0) {
                 emptyState.style.display = 'block';
+                const title = document.getElementById('emptyStateTitle');
+                const sub = document.getElementById('emptyStateSub');
+                if (title && sub) {
+                    if (roomAdminState.kind === 'stage' && count > 0) {
+                        title.innerText = 'Nobody is on the stage right now';
+                        sub.innerText = 'Listeners can see and hear whoever is on stage.';
+                    } else {
+                        title.innerText = 'Waiting for others to join...';
+                        sub.innerText = 'Share the invite link to get started.';
+                    }
+                }
             } else {
                 emptyState.style.display = 'none';
+            }
+            if (count > 0) {
                 loadTileOrder();
             }
-            updateGridLayout(count);
+            updateGridLayout(visible);
         }
 
         function updateGridLayout(count) {
@@ -1322,6 +1361,7 @@
             container._fullscreenChangeHandler = onFullscreenChange;
 
             container.dataset.userId = userId;
+            if (stageTileHidden(userId)) container.style.display = 'none';
 
             setupSmoothDragAndDrop(container);
 
