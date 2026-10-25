@@ -1033,6 +1033,15 @@
                 await populateDeviceList();
                 await detectCameras();
                 navigator.mediaDevices.ondevicechange = populateDeviceList;
+                // The grant itself is the moment labels unlock; also keep
+                // converging via the ticker while any row is a fallback.
+                try {
+                    for (const name of ['microphone', 'camera']) {
+                        const st = await navigator.permissions.query({ name });
+                        st.onchange = () => refreshDeviceListsWhenReady();
+                    }
+                } catch (e) {}
+                startDeviceLabelTicker();
 
                 await startPreview();
 
@@ -1056,36 +1065,80 @@
             }
         }
 
-        let deviceLabelRefreshTimers = [];
-        // enumerateDevices can keep returning blank input labels for a
-        // beat after a capture resolves (the browser's permission state
-        // lags the stream), so a single immediate refresh can rebuild
-        // the lists from a half-settled snapshot — speaker labels show
-        // up while mic/camera are still blank. Retry briefly until the
-        // input labels materialize.
-        function refreshDeviceListsWhenReady() {
-            deviceLabelRefreshTimers.forEach(clearTimeout);
-            deviceLabelRefreshTimers = [];
-            let attempts = 0;
-            const attempt = async () => {
+        // Device labels are unreliable narrators: enumerateDevices can
+        // return blank labels (and blank ids) for inputs on one call and
+        // full labels on the next — around permission grants, capture
+        // start/stop, and Bluetooth profile switches — while output
+        // labels stay readable throughout. So: remember every label ever
+        // seen (by device id, and by kind+position as a fallback for
+        // snapshots where ids vanish too), never let a blank snapshot
+        // erase a known label, and keep re-checking for a while after
+        // each capture until no input row shows a fallback anymore.
+        const deviceLabelCache = new Map();
+        function cacheDeviceLabels(devices) {
+            if (!devices) return;
+            const kindCounts = {};
+            devices.forEach(d => {
+                const idx = (kindCounts[d.kind] = (kindCounts[d.kind] || 0) + 1) - 1;
+                if (d.label) {
+                    if (d.deviceId) deviceLabelCache.set(d.deviceId, d.label);
+                    deviceLabelCache.set(d.kind + '#' + idx, d.label);
+                }
+            });
+        }
+        function primeDeviceLabelCacheFromTracks() {
+            if (!localStream) return;
+            try {
+                localStream.getTracks().forEach(t => {
+                    const id = t.getSettings && t.getSettings().deviceId;
+                    if (id && t.label) deviceLabelCache.set(id, t.label);
+                });
+            } catch (e) {}
+        }
+        function deviceOptionLabel(device, kindIndex) {
+            return device.label
+                || (device.deviceId && deviceLabelCache.get(device.deviceId))
+                || deviceLabelCache.get(device.kind + '#' + kindIndex)
+                || '';
+        }
+
+        function deviceListsHaveFallbacks() {
+            return [audioSelect, videoSelect].some(sel =>
+                sel && [...sel.options].some(o => /^(audioinput|videoinput) \(/.test(o.text)));
+        }
+        let deviceLabelTicker = null;
+        function startDeviceLabelTicker() {
+            if (deviceLabelTicker) return;
+            let ticks = 0;
+            deviceLabelTicker = setInterval(async () => {
+                ticks++;
+                if (!deviceListsHaveFallbacks() || ticks > 20) {
+                    clearInterval(deviceLabelTicker);
+                    deviceLabelTicker = null;
+                    return;
+                }
                 try {
                     await populateDeviceList();
                     await populateSettingsDeviceList();
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const stillBlank = devices.some(d =>
-                        (d.kind === 'audioinput' || d.kind === 'videoinput') && !d.label);
-                    attempts++;
-                    if (stillBlank && attempts < 5) {
-                        deviceLabelRefreshTimers.push(setTimeout(attempt, 300));
-                    }
                 } catch (e) {}
-            };
-            attempt();
+            }, 1500);
+        }
+
+        function refreshDeviceListsWhenReady() {
+            (async () => {
+                try {
+                    await populateDeviceList();
+                    await populateSettingsDeviceList();
+                } catch (e) {}
+                startDeviceLabelTicker();
+            })();
         }
 
         async function populateDeviceList() {
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
+                cacheDeviceLabels(devices);
+                primeDeviceLabelCacheFromTracks();
 
                 const audioTrack = localStream ? localStream.getAudioTracks()[0] : null;
                 const videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
@@ -1097,10 +1150,12 @@
                 audioOutputSelect.innerHTML = '';
                 videoSelect.innerHTML = '';
 
+                const kindCounts = {};
                 devices.forEach(device => {
+                    const kindIndex = (kindCounts[device.kind] = (kindCounts[device.kind] || 0) + 1) - 1;
                     const option = document.createElement('option');
                     option.value = device.deviceId;
-                    option.text = device.label || `${device.kind} (${device.deviceId.slice(0,5)}...)`;
+                    option.text = deviceOptionLabel(device, kindIndex) || `${device.kind} (${device.deviceId.slice(0,5)}...)`;
                     if (device.kind === 'audioinput') {
                         audioSelect.appendChild(option);
                     } else if (device.kind === 'audiooutput') {
@@ -1108,17 +1163,6 @@
                     }
                     else if (device.kind === 'videoinput') videoSelect.appendChild(option);
                 });
-
-                // When ids are back but labels still lag, the live tracks
-                // carry their own labels — patch the active devices' rows.
-                if (audioTrack && audioTrack.label && activeAudioId) {
-                    const opt = [...audioSelect.options].find(o => o.value === activeAudioId);
-                    if (opt && opt.text.startsWith('audioinput')) opt.text = audioTrack.label;
-                }
-                if (videoTrack && videoTrack.label && activeVideoId) {
-                    const opt = [...videoSelect.options].find(o => o.value === activeVideoId);
-                    if (opt && opt.text.startsWith('videoinput')) opt.text = videoTrack.label;
-                }
 
                 const targetAudioId = currentAudioInputId || activeAudioId;
                 if (targetAudioId && [...audioSelect.options].some(o => o.value === targetAudioId)) {
@@ -1145,6 +1189,8 @@
         async function populateSettingsDeviceList() {
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
+                cacheDeviceLabels(devices);
+                primeDeviceLabelCacheFromTracks();
                 const settingsAudio = document.getElementById('settingsAudioSource');
                 const settingsAudioOutput = document.getElementById('settingsAudioOutputSource');
                 const settingsVideo = document.getElementById('settingsVideoSource');
@@ -1159,10 +1205,12 @@
                 settingsAudioOutput.innerHTML = '';
                 settingsVideo.innerHTML = '';
 
+                const kindCounts = {};
                 devices.forEach(device => {
+                    const kindIndex = (kindCounts[device.kind] = (kindCounts[device.kind] || 0) + 1) - 1;
                     const option = document.createElement('option');
                     option.value = device.deviceId;
-                    option.text = device.label || `${device.kind} (${device.deviceId.slice(0,5)}...)`;
+                    option.text = deviceOptionLabel(device, kindIndex) || `${device.kind} (${device.deviceId.slice(0,5)}...)`;
                     if (device.kind === 'audioinput') {
                         settingsAudio.appendChild(option);
                     } else if (device.kind === 'audiooutput') {
@@ -1170,15 +1218,6 @@
                     }
                     else if (device.kind === 'videoinput') settingsVideo.appendChild(option);
                 });
-
-                if (audioTrack && audioTrack.label && activeAudioId) {
-                    const opt = [...settingsAudio.options].find(o => o.value === activeAudioId);
-                    if (opt && opt.text.startsWith('audioinput')) opt.text = audioTrack.label;
-                }
-                if (videoTrack && videoTrack.label && activeVideoId) {
-                    const opt = [...settingsVideo.options].find(o => o.value === activeVideoId);
-                    if (opt && opt.text.startsWith('videoinput')) opt.text = videoTrack.label;
-                }
 
                 const targetAudioId = currentAudioInputId || activeAudioId;
                 if (targetAudioId && [...settingsAudio.options].some(o => o.value === targetAudioId)) {
