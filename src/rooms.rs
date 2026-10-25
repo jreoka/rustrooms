@@ -647,8 +647,8 @@ pub(crate) async fn handle_socket(
                             };
                             let mut issued_admin_key: Option<String> = None;
                             let mut park_for_knock = false;
-                            let mut resume_ok = false;
-                            let mut warm_resume = false;
+                            let resume_ok;
+                            let warm_resume;
                             let mut admin_state_changed = false;
                             {
                                 let room_needs_password = {
