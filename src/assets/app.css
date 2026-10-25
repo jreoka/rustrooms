@@ -189,7 +189,7 @@ body {
     background: var(--accent);
     color: var(--md-on-primary);
     border: none;
-    border-radius: var(--radius-md) !important;
+    border-radius: var(--radius-sm) !important;
     height: 40px;
     padding: 0 18px !important;
     display: inline-flex;
@@ -211,7 +211,7 @@ body {
     padding: 0 36px !important;
     font-size: 15px;
     font-weight: 600;
-    border-radius: var(--radius-lg) !important;
+    border-radius: var(--radius-md) !important;
 }
 .btn-primary:hover {
     background: var(--accent-hover);
@@ -244,7 +244,7 @@ body {
     background: transparent;
     color: var(--md-on-surface);
     border: 1px solid var(--md-outline-variant);
-    border-radius: var(--radius-md) !important;
+    border-radius: var(--radius-sm) !important;
     height: 40px;
     padding: 0 18px !important;
     display: inline-flex;
@@ -288,7 +288,7 @@ body {
     background: var(--md-surface-container-high);
     color: var(--md-on-surface);
     border: 1px solid var(--md-outline-variant);
-    border-radius: var(--radius-md) !important;
+    border-radius: var(--radius-sm) !important;
     -webkit-tap-highlight-color: transparent;
     transition: background 0.15s var(--ease-standard);
 }
@@ -300,7 +300,7 @@ body {
 .modal-content .btn-primary,
 .modal-content .btn-secondary {
     border: 1px solid var(--md-outline-variant) !important;
-    border-radius: var(--radius-md) !important;
+    border-radius: var(--radius-sm) !important;
     height: 40px;
     padding: 0 18px;
     font-size: 14px;
@@ -336,13 +336,13 @@ body {
 }
 
 /* ============================================================
- * Icon control buttons (taskbar etc.) — circular, neutral
+ * Icon control buttons (taskbar etc.) — rounded square, neutral
  * ============================================================ */
 .control-btn {
     width: 52px;
     height: 52px;
     padding: 0;
-    border-radius: 50% !important;
+    border-radius: var(--radius-lg) !important;
     border: 1px solid var(--md-outline-variant);
     background: var(--md-secondary-container);
     color: var(--md-on-secondary-container);
@@ -666,7 +666,7 @@ input[type=range]::-moz-range-thumb {
     box-sizing: border-box;
     background: var(--md-surface-container-high);
     border: 1px solid var(--md-outline-variant);
-    border-radius: var(--radius-pill) !important;
+    border-radius: var(--radius-md) !important;
     height: 36px !important;
     padding: 0 14px !important;
     display: inline-flex !important;
@@ -1119,7 +1119,7 @@ video.active + .avatar-layer { display: none !important; }
     flex-shrink: 0;
     background: transparent;
     border: none;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     color: var(--md-on-surface-variant);
     transition: background 0.15s ease;
 }
@@ -1396,7 +1396,7 @@ video.active + .avatar-layer { display: none !important; }
     color: var(--md-on-surface-variant);
     cursor: pointer;
     padding: 4px;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     transition: background 0.15s ease;
 }
 .user-volume-menu .uvm-close:hover {
@@ -1430,7 +1430,7 @@ video.active + .avatar-layer { display: none !important; }
     color: var(--md-on-surface);
     cursor: pointer;
     padding: 4px;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
     transition: background 0.15s ease;
 }
@@ -1492,7 +1492,7 @@ video.active + .avatar-layer { display: none !important; }
 .stats-close {
     width: 32px;
     height: 32px;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1763,7 +1763,7 @@ video.active + .avatar-layer { display: none !important; }
     #onTheGoOverlay button {
         padding-top: 0.875rem !important;
         padding-bottom: 0.875rem !important;
-        border-radius: 1rem !important;
+        border-radius: 0.5rem !important;
     }
     #onTheGoOverlay button svg { width: 1.5rem !important; height: 1.5rem !important; }
     #onTheGoOverlay button span { font-size: 0.875rem !important; }
@@ -1788,7 +1788,7 @@ video.active + .avatar-layer { display: none !important; }
     #onTheGoOverlay button {
         padding-top: 0.625rem !important;
         padding-bottom: 0.625rem !important;
-        border-radius: 0.75rem !important;
+        border-radius: 0.5rem !important;
     }
     #onTheGoOverlay button svg { width: 1.25rem !important; height: 1.25rem !important; }
     #onTheGoOverlay button span { font-size: 0.8rem !important; }

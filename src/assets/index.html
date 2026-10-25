@@ -111,7 +111,7 @@
             </div>
 
             <div id="startActionContainer" class="relative min-h-[72px] flex justify-center items-center">
-                 <button id="btnStartRoom" onclick="createRoom()" class="btn-primary absolute w-full md:w-auto px-12 py-4 rounded-2xl font-semibold text-lg transition-all flex items-center justify-center">
+                 <button id="btnStartRoom" onclick="createRoom()" class="btn-primary absolute w-full md:w-auto px-12 py-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center">
                     Start Room
                 </button>
 
@@ -147,7 +147,7 @@
             </div>
 
             <div class="pt-4">
-                <button onclick="proceedToSetup()" class="btn-primary w-full py-4 rounded-2xl font-bold text-lg transition-all shadow-lg hover:shadow-indigo-500/20 group">
+                <button onclick="proceedToSetup()" class="btn-primary w-full py-4 rounded-lg font-bold text-lg transition-all shadow-lg hover:shadow-indigo-500/20 group">
                     Join Conversation
                     <svg class="inline-block ml-2 w-5 h-5 transition-transform group-hover:translate-x-1" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
                 </button>
@@ -416,7 +416,7 @@
         <!-- Bottom section: Big buttons taking up the whole lower portion of the screen -->
         <div class="grid grid-cols-2 gap-3 mb-4 sm:mb-8 w-full max-w-md mx-auto flex-shrink-0">
             <!-- Huge Mic Toggle Button -->
-            <button id="btnOnTheGoMic" onclick="toggleMic()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-2xl font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
+            <button id="btnOnTheGoMic" onclick="toggleMic()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
                 <div id="onTheGoMicIconWrapper">
                     <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
                 </div>
@@ -424,7 +424,7 @@
             </button>
 
             <!-- Huge Deafen/Speaker Toggle Button -->
-            <button id="btnOnTheGoDeafen" onclick="toggleDeafen()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-2xl font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
+            <button id="btnOnTheGoDeafen" onclick="toggleDeafen()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
                 <div id="onTheGoDeafenIconWrapper">
                     <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>
                 </div>
@@ -432,7 +432,7 @@
             </button>
 
             <!-- Huge Low Bandwidth Toggle Button -->
-            <button id="btnOnTheGoLowBandwidth" onclick="toggleOnTheGoLowBandwidth()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-2xl font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
+            <button id="btnOnTheGoLowBandwidth" onclick="toggleOnTheGoLowBandwidth()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
                 <div id="onTheGoLowBandwidthIconWrapper">
                     <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 </div>
@@ -440,7 +440,7 @@
             </button>
 
             <!-- Huge Copy Invite Link Button -->
-            <button id="btnOnTheGoCopy" onclick="copyLink()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-2xl font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
+            <button id="btnOnTheGoCopy" onclick="copyLink()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
                 <div id="onTheGoCopyIconWrapper">
                     <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                 </div>
@@ -448,12 +448,12 @@
             </button>
 
             <!-- Exit On-the-go -->
-            <button onclick="toggleOnTheGoMode(false)" class="flex flex-col items-center justify-center py-4 rounded-2xl font-bold text-sm text-zinc-300 transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
+            <button onclick="toggleOnTheGoMode(false)" class="flex flex-col items-center justify-center py-4 rounded-lg font-bold text-sm text-zinc-300 transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
                 <span>Exit On-the-go</span>
             </button>
 
             <!-- Leave Call -->
-            <button onclick="leaveRoom()" class="flex flex-col items-center justify-center py-4 rounded-2xl font-bold text-sm text-white transition-all bg-red-600 hover:bg-red-700 active:scale-[0.98] shadow-lg shadow-red-600/20">
+            <button onclick="leaveRoom()" class="flex flex-col items-center justify-center py-4 rounded-lg font-bold text-sm text-white transition-all bg-red-600 hover:bg-red-700 active:scale-[0.98] shadow-lg shadow-red-600/20">
                 <span>Leave Call</span>
             </button>
         </div>
