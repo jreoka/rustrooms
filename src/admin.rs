@@ -172,7 +172,7 @@ pub(crate) async fn send_knock_update(state: &AppState, room_id: &str) {
             Some(a) => (
                 a.pending
                     .iter()
-                    .map(|(id, p)| serde_json::json!({ "id": id, "nickname": p.nickname }))
+                    .map(|(id, p)| serde_json::json!({ "id": id, "nickname": p.nickname, "channel": p.channel }))
                     .collect::<Vec<_>>(),
                 a.admins.clone(),
             ),

@@ -3326,7 +3326,10 @@
             if (count) count.textContent = pendingKnocks.length;
             list.innerHTML = pendingKnocks.map(k => `
                 <div class="knock-row">
-                    <span class="knock-name">${escapeHtml(k.nickname || 'Guest')}</span>
+                    <div class="knock-who">
+                        <span class="knock-name">${escapeHtml(k.nickname || 'Guest')}</span>
+                        ${k.channel ? `<span class="knock-meta">wants to join #${escapeHtml(k.channel)}</span>` : ''}
+                    </div>
                     <button class="knock-btn approve" onclick="respondKnock('${k.id}', true)">Let in</button>
                     <button class="knock-btn deny" onclick="respondKnock('${k.id}', false)">Deny</button>
                 </div>`).join('');

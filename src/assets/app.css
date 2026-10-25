@@ -2002,7 +2002,9 @@ video.active + .avatar-layer { display: none !important; }
 }
 .knock-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 .knock-row + .knock-row { border-top: 1px solid var(--border-subtle); }
-.knock-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.knock-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.knock-name { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.knock-meta { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .knock-btn {
     padding: 5px 10px;
     border-radius: 8px;

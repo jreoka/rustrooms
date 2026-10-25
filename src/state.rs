@@ -137,6 +137,9 @@ impl ForceFlags {
 
 pub(crate) struct PendingKnock {
     pub nickname: String,
+    // The channel this connection is trying to land in (from its join
+    // URL), shown to admins in the knock panel.
+    pub channel: String,
     pub tx: UserTx,
 }
 

@@ -927,6 +927,7 @@ pub(crate) async fn handle_socket(
                                             user_id.clone(),
                                             PendingKnock {
                                                 nickname: nickname.clone(),
+                                                channel: channel_id.clone(),
                                                 tx: tx.clone(),
                                             },
                                         );
