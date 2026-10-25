@@ -111,7 +111,7 @@ self.addEventListener('fetch', (event) => {
 pub(crate) async fn icon_svg() -> impl IntoResponse {
     let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
     <rect width="512" height="512" rx="112" fill="#101418"/>
-    <circle cx="256" cy="256" r="168" fill="#A8C7FA"/>
+    <circle cx="256" cy="256" r="168" fill="#575EEA"/>
 </svg>"##;
     ([(header::CONTENT_TYPE, "image/svg+xml")], svg)
 }
