@@ -201,104 +201,79 @@
                 audioContext.resume().catch(e => console.warn("Failed to resume AudioContext:", e));
             }
 
-            const osc = audioContext.createOscillator();
-            const gain = audioContext.createGain();
+            // Soft modern UI tones: a sine fundamental plus a quiet octave
+            // harmonic through a gentle lowpass, shaped by a fast pluck
+            // envelope (no bare beeps, no pitch slides). Motifs are two-note
+            // shapes from one key family so events feel related: rising =
+            // started/joined, falling = stopped/left.
+            const t0 = audioContext.currentTime;
 
-            osc.connect(gain);
-            gain.connect(audioContext.destination);
+            const master = audioContext.createGain();
+            master.gain.value = 0.9;
+            const lowpass = audioContext.createBiquadFilter();
+            lowpass.type = 'lowpass';
+            lowpass.frequency.value = 3600;
+            lowpass.Q.value = 0.4;
+            master.connect(lowpass);
+            lowpass.connect(audioContext.destination);
 
-            const now = audioContext.currentTime;
-
-            if (type === 'join') {
+            function tone(freq, at, dur, vol, bendTo) {
+                const osc = audioContext.createOscillator();
                 osc.type = 'sine';
-                osc.frequency.setValueAtTime(523.25, now);
-                osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.1);
+                osc.frequency.setValueAtTime(freq, t0 + at);
+                if (bendTo) osc.frequency.exponentialRampToValueAtTime(bendTo, t0 + at + dur);
 
-                gain.gain.setValueAtTime(0.1, now);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+                const harm = audioContext.createOscillator();
+                harm.type = 'triangle';
+                harm.frequency.setValueAtTime(freq * 2, t0 + at);
+                if (bendTo) harm.frequency.exponentialRampToValueAtTime(bendTo * 2, t0 + at + dur);
 
-                osc.start(now);
-                osc.stop(now + 0.5);
-            } else if (type === 'leave') {
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(440, now);
-                osc.frequency.exponentialRampToValueAtTime(220, now + 0.2);
+                const g = audioContext.createGain();
+                g.gain.setValueAtTime(0.0001, t0 + at);
+                g.gain.exponentialRampToValueAtTime(vol, t0 + at + 0.008);
+                g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
 
-                gain.gain.setValueAtTime(0.1, now);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+                const hg = audioContext.createGain();
+                hg.gain.value = 0.18;
 
-                osc.start(now);
-                osc.stop(now + 0.3);
-            } else if (type === 'disconnect') {
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(600, now);
-                osc.frequency.exponentialRampToValueAtTime(200, now + 0.2);
+                osc.connect(g);
+                harm.connect(hg);
+                hg.connect(g);
+                g.connect(master);
 
-                gain.gain.setValueAtTime(0.1, now);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+                osc.start(t0 + at);
+                harm.start(t0 + at);
+                osc.stop(t0 + at + dur + 0.05);
+                harm.stop(t0 + at + dur + 0.05);
+            }
 
-                osc.start(now);
-                osc.stop(now + 0.3);
-            } else if (type === 'mute') {
-                 osc.type = 'sine';
-                 osc.frequency.setValueAtTime(400, now);
-                 gain.gain.setValueAtTime(0.1, now);
-                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-                 osc.start(now);
-                 osc.stop(now + 0.1);
-            } else if (type === 'unmute') {
-                 osc.type = 'sine';
-                 osc.frequency.setValueAtTime(800, now);
-                 gain.gain.setValueAtTime(0.1, now);
-                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-                 osc.start(now);
-                 osc.stop(now + 0.1);
-            } else if (type === 'bandwidth_on') {
-                 osc.type = 'sine';
-                 osc.frequency.setValueAtTime(400, now);
-                 osc.frequency.exponentialRampToValueAtTime(600, now + 0.08);
-
-                 gain.gain.setValueAtTime(0.08, now);
-                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-
-                 const osc2 = audioContext.createOscillator();
-                 const gain2 = audioContext.createGain();
-                 osc2.connect(gain2);
-                 gain2.connect(audioContext.destination);
-                 osc2.type = 'sine';
-                 osc2.frequency.setValueAtTime(600, now + 0.1);
-                 osc2.frequency.exponentialRampToValueAtTime(800, now + 0.18);
-
-                 gain2.gain.setValueAtTime(0.08, now + 0.1);
-                 gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-
-                 osc.start(now);
-                 osc.stop(now + 0.08);
-                 osc2.start(now + 0.1);
-                 osc2.stop(now + 0.18);
-            } else if (type === 'bandwidth_off') {
-                 osc.type = 'sine';
-                 osc.frequency.setValueAtTime(800, now);
-                 osc.frequency.exponentialRampToValueAtTime(600, now + 0.08);
-
-                 gain.gain.setValueAtTime(0.08, now);
-                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-
-                 const osc2 = audioContext.createOscillator();
-                 const gain2 = audioContext.createGain();
-                 osc2.connect(gain2);
-                 gain2.connect(audioContext.destination);
-                 osc2.type = 'sine';
-                 osc2.frequency.setValueAtTime(600, now + 0.1);
-                 osc2.frequency.exponentialRampToValueAtTime(400, now + 0.18);
-
-                 gain2.gain.setValueAtTime(0.08, now + 0.1);
-                 gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-
-                 osc.start(now);
-                 osc.stop(now + 0.08);
-                 osc2.start(now + 0.1);
-                 osc2.stop(now + 0.18);
+            switch (type) {
+                case 'join':
+                    tone(587.33, 0, 0.22, 0.11);
+                    tone(880.00, 0.07, 0.30, 0.11);
+                    break;
+                case 'leave':
+                    tone(880.00, 0, 0.20, 0.09);
+                    tone(587.33, 0.07, 0.28, 0.09);
+                    break;
+                case 'disconnect':
+                    tone(523.25, 0, 0.22, 0.10);
+                    tone(349.23, 0.09, 0.34, 0.10);
+                    break;
+                case 'mute':
+                    tone(392.00, 0, 0.10, 0.10, 349.23);
+                    break;
+                case 'unmute':
+                    tone(659.25, 0, 0.11, 0.10, 739.99);
+                    break;
+                case 'bandwidth_on':
+                    tone(523.25, 0, 0.14, 0.08);
+                    tone(783.99, 0.06, 0.20, 0.08);
+                    break;
+                case 'bandwidth_off':
+                    tone(783.99, 0, 0.14, 0.08);
+                    tone(523.25, 0.06, 0.20, 0.08);
+                    break;
             }
         }
 
