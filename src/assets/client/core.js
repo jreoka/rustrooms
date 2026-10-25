@@ -161,12 +161,8 @@
                         // until the page holds a capture or a remembered
                         // permission, so lists populated before this point
                         // — the setup screen in incognito or a fresh
-                        // profile — show only kind fallbacks. Refresh both
-                        // lists now that real names are available.
-                        try {
-                            populateDeviceList();
-                            populateSettingsDeviceList();
-                        } catch (e) {}
+                        // profile — show only kind fallbacks.
+                        refreshDeviceListsWhenReady();
                         return stream;
                     });
                 };
@@ -1060,6 +1056,33 @@
             }
         }
 
+        let deviceLabelRefreshTimers = [];
+        // enumerateDevices can keep returning blank input labels for a
+        // beat after a capture resolves (the browser's permission state
+        // lags the stream), so a single immediate refresh can rebuild
+        // the lists from a half-settled snapshot — speaker labels show
+        // up while mic/camera are still blank. Retry briefly until the
+        // input labels materialize.
+        function refreshDeviceListsWhenReady() {
+            deviceLabelRefreshTimers.forEach(clearTimeout);
+            deviceLabelRefreshTimers = [];
+            let attempts = 0;
+            const attempt = async () => {
+                try {
+                    await populateDeviceList();
+                    await populateSettingsDeviceList();
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const stillBlank = devices.some(d =>
+                        (d.kind === 'audioinput' || d.kind === 'videoinput') && !d.label);
+                    attempts++;
+                    if (stillBlank && attempts < 5) {
+                        deviceLabelRefreshTimers.push(setTimeout(attempt, 300));
+                    }
+                } catch (e) {}
+            };
+            attempt();
+        }
+
         async function populateDeviceList() {
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
@@ -1085,6 +1108,17 @@
                     }
                     else if (device.kind === 'videoinput') videoSelect.appendChild(option);
                 });
+
+                // When ids are back but labels still lag, the live tracks
+                // carry their own labels — patch the active devices' rows.
+                if (audioTrack && audioTrack.label && activeAudioId) {
+                    const opt = [...audioSelect.options].find(o => o.value === activeAudioId);
+                    if (opt && opt.text.startsWith('audioinput')) opt.text = audioTrack.label;
+                }
+                if (videoTrack && videoTrack.label && activeVideoId) {
+                    const opt = [...videoSelect.options].find(o => o.value === activeVideoId);
+                    if (opt && opt.text.startsWith('videoinput')) opt.text = videoTrack.label;
+                }
 
                 const targetAudioId = currentAudioInputId || activeAudioId;
                 if (targetAudioId && [...audioSelect.options].some(o => o.value === targetAudioId)) {
@@ -1136,6 +1170,15 @@
                     }
                     else if (device.kind === 'videoinput') settingsVideo.appendChild(option);
                 });
+
+                if (audioTrack && audioTrack.label && activeAudioId) {
+                    const opt = [...settingsAudio.options].find(o => o.value === activeAudioId);
+                    if (opt && opt.text.startsWith('audioinput')) opt.text = audioTrack.label;
+                }
+                if (videoTrack && videoTrack.label && activeVideoId) {
+                    const opt = [...settingsVideo.options].find(o => o.value === activeVideoId);
+                    if (opt && opt.text.startsWith('videoinput')) opt.text = videoTrack.label;
+                }
 
                 const targetAudioId = currentAudioInputId || activeAudioId;
                 if (targetAudioId && [...settingsAudio.options].some(o => o.value === targetAudioId)) {
