@@ -3052,7 +3052,7 @@
         // ---- Room admin, lobby, stage ----
         // The server owns this state; admin-update messages replace it
         // wholesale and every render reads from here.
-        let roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, kind: 'regular', speakers: [], forced: {} };
+        let roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, kind: 'regular', speakers: [], audience: [], forced: {} };
         let myForceFlags = { muted: false, deafened: false, camOff: false, shareOff: false };
         let pendingKnocks = [];
         let createRoomTypeChoice = 'regular';
@@ -3081,7 +3081,9 @@
         function isCreatorId(uid) { return !!uid && roomAdminState.creatorId === uid; }
         function iAmAdmin() { return isAdminId(persistentUserId); }
         function canSpeakId(uid) {
-            return roomAdminState.kind !== 'stage' || isAdminId(uid) || roomAdminState.speakers.includes(uid);
+            return roomAdminState.kind !== 'stage'
+                || roomAdminState.speakers.includes(uid)
+                || (isAdminId(uid) && !(roomAdminState.audience || []).includes(uid));
         }
         function sendAdminAction(action, userId, extra) {
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -3111,6 +3113,7 @@
                 lobby: !!data.lobby,
                 kind: data.kind || 'regular',
                 speakers: data.speakers || [],
+                audience: data.audience || [],
                 forced: data.forced || {}
             };
             applyStageRole();

@@ -1808,24 +1808,33 @@ pub(crate) async fn handle_socket(
                                                             "The room creator cannot be demoted.",
                                                         ));
                                                     } else {
-                                                        changed =
+                                                        let demoted =
                                                             a.admins.remove(&target);
+                                                        let unparked =
+                                                            a.audience.remove(&target);
+                                                        changed = demoted || unparked;
                                                     }
                                                 }
                                                 "to-stage" => {
-                                                    changed =
+                                                    let unparked =
+                                                        a.audience.remove(&target);
+                                                    let added =
                                                         a.speakers.insert(target.clone());
+                                                    changed = unparked || added;
                                                 }
                                                 "to-audience" => {
-                                                    if a.is_admin(&target) {
-                                                        refusal = Some((
-                                                            "MUST_DEMOTE_FIRST",
-                                                            "Demote this admin before moving them to the audience.",
-                                                        ));
+                                                    let unseated =
+                                                        a.speakers.remove(&target);
+                                                    // Admins hold a stage seat by
+                                                    // default; park them in the
+                                                    // audience set to revoke the
+                                                    // seat (their powers stay).
+                                                    let parked = if a.is_admin(&target) {
+                                                        a.audience.insert(target.clone())
                                                     } else {
-                                                        changed =
-                                                            a.speakers.remove(&target);
-                                                    }
+                                                        a.audience.remove(&target)
+                                                    };
+                                                    changed = unseated || parked;
                                                 }
                                                 _ => {}
                                             }
@@ -2719,19 +2728,31 @@ pub(crate) async fn channel_status(
     // The room kind lives in the admin state; in distributed mode it may
     // only exist in Redis until something materializes it on this node.
     crate::admin::load_admin_redis(&state, &room_id).await;
-    let kind = state
-        .admin_rooms
-        .lock()
-        .await
-        .get(&room_id)
-        .map(|admin| admin.kind.as_str().to_string())
-        .unwrap_or_else(|| "regular".to_string());
+    let (kind, speakers) = {
+        let lock = state.admin_rooms.lock().await;
+        match lock.get(&room_id) {
+            Some(admin) => {
+                let speakers = if admin.kind == RoomKind::Stage {
+                    users_map
+                        .keys()
+                        .filter(|uid| admin.can_speak(uid))
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                (admin.kind.as_str().to_string(), speakers)
+            }
+            None => ("regular".to_string(), Vec::new()),
+        }
+    };
 
     axum::Json(RoomStatus {
         name: channel_id,
         users: users_map,
         created_at,
         kind,
+        speakers,
     })
     .into_response()
 }

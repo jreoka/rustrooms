@@ -337,6 +337,10 @@ pub(crate) async fn store_admin_redis(state: &AppState, room_id: &str) {
                     serde_json::to_string(&p.speakers).unwrap_or_default(),
                 ),
                 (
+                    "audience".into(),
+                    serde_json::to_string(&p.audience).unwrap_or_default(),
+                ),
+                (
                     "forced".into(),
                     serde_json::to_string(&p.forced).unwrap_or_default(),
                 ),
@@ -388,6 +392,7 @@ pub(crate) async fn load_admin_redis(state: &AppState, room_id: &str) {
         lobby: get("lobby") == "1",
         kind: RoomKind::from_str(get("kind")),
         speakers: parse_set("speakers"),
+        audience: parse_set("audience"),
         forced: serde_json::from_str(get("forced")).unwrap_or_default(),
         pending: std::collections::HashMap::new(),
         approved: std::collections::HashSet::new(),

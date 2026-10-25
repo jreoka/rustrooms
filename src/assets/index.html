@@ -198,10 +198,23 @@
                 <p id="inviteStageNote" class="hidden text-sm" style="color: var(--text-secondary); line-height: 1.625;">This is a <span class="font-semibold" style="color: var(--text-primary);">stage room</span>, not a regular call. You'll join as a listener — an admin can bring you on stage when it's your turn to speak.</p>
             </div>
 
-            <div class="space-y-4">
+            <div id="inviteFlatBlock" class="space-y-4">
                 <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest text-left">Currently in call</h3>
                 <div id="inviteUserList" class="flex flex-wrap justify-center gap-3 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
                     <!-- Users will be injected here -->
+                </div>
+            </div>
+
+            <div id="inviteStageBlock" class="space-y-4 hidden">
+                <div class="space-y-3">
+                    <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest text-left">On stage</h3>
+                    <div id="inviteStageList" class="flex flex-wrap justify-center gap-3 overflow-y-auto pr-2 custom-scrollbar" style="max-height: 160px;"></div>
+                    <p id="inviteStageEmpty" class="hidden text-sm" style="color: var(--text-muted);">Nobody is on the stage right now</p>
+                </div>
+                <div class="space-y-3">
+                    <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest text-left">Listeners</h3>
+                    <div id="inviteAudienceList" class="flex flex-wrap justify-center gap-3 overflow-y-auto pr-2 custom-scrollbar" style="max-height: 160px;"></div>
+                    <p id="inviteAudienceEmpty" class="hidden text-sm" style="color: var(--text-muted);">No listeners right now</p>
                 </div>
             </div>
 

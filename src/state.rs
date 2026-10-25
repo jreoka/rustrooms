@@ -39,6 +39,10 @@ pub(crate) struct RoomStatus {
     /// correctly before anyone joins.
     #[serde(default)]
     pub kind: String,
+    /// Stage rooms only: ids of the present users who hold a stage seat,
+    /// so the landing page can split "On stage" from "Listeners".
+    #[serde(default)]
+    pub speakers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +156,10 @@ pub(crate) struct RoomAdmin {
     pub kind: RoomKind,
     // Stage rooms: non-admin users allowed to speak/present.
     pub speakers: HashSet<String>,
+    // Stage rooms: admins parked in the audience. Admins normally
+    // hold a stage seat by virtue of being admins; membership here
+    // revokes that seat (not their powers) until they are moved back.
+    pub audience: HashSet<String>,
     pub forced: HashMap<String, ForceFlags>,
     // Lobby: connections parked before join, and one-shot approvals.
     pub pending: HashMap<String, PendingKnock>,
@@ -165,8 +173,8 @@ impl RoomAdmin {
 
     pub(crate) fn can_speak(&self, user_id: &str) -> bool {
         self.kind == RoomKind::Regular
-            || self.admins.contains(user_id)
             || self.speakers.contains(user_id)
+            || (self.admins.contains(user_id) && !self.audience.contains(user_id))
     }
 
     // The role state shared with every client (and, in distributed
@@ -180,6 +188,7 @@ impl RoomAdmin {
             "lobby": self.lobby,
             "kind": self.kind.as_str(),
             "speakers": self.speakers.iter().collect::<Vec<_>>(),
+            "audience": self.audience.iter().collect::<Vec<_>>(),
             "forced": self.forced,
         })
     }
@@ -211,6 +220,7 @@ impl RoomAdmin {
         self.admins = read_set("admins");
         self.banned = read_set("banned");
         self.speakers = read_set("speakers");
+        self.audience = read_set("audience");
         if let Some(lobby) = data.get("lobby").and_then(|v| v.as_bool()) {
             self.lobby = lobby;
         }
@@ -241,6 +251,9 @@ pub(crate) struct PersistedRoomAdmin {
     pub lobby: bool,
     pub kind: RoomKind,
     pub speakers: HashSet<String>,
+    // Absent in state files written before audience parking existed.
+    #[serde(default)]
+    pub audience: HashSet<String>,
     pub forced: HashMap<String, ForceFlags>,
 }
 
@@ -287,6 +300,7 @@ impl RoomAdmin {
             lobby: self.lobby,
             kind: self.kind,
             speakers: self.speakers.clone(),
+            audience: self.audience.clone(),
             forced: self.forced.clone(),
         }
     }
@@ -312,6 +326,7 @@ impl From<PersistedRoomAdmin> for RoomAdmin {
             lobby: p.lobby,
             kind: p.kind,
             speakers: p.speakers,
+            audience: p.audience,
             forced: p.forced,
             pending: HashMap::new(),
             approved: HashSet::new(),

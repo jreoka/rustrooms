@@ -1297,7 +1297,7 @@
             }
             if (e.currentTarget.dataset.drop === 'stage') {
                 if (!canSpeakId(uid)) sendAdminAction('to-stage', uid);
-            } else if (canSpeakId(uid) && !isAdminId(uid)) {
+            } else if (canSpeakId(uid)) {
                 sendAdminAction('to-audience', uid);
             }
         }
@@ -1337,12 +1337,12 @@
             return `
                 <div class="stage-group pointer-events-auto" data-drop="stage" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, '${rid}')">
                     <div class="stage-group-label">On stage</div>
-                    ${stageRows || '<div class="stage-empty">No one on stage</div>'}
+                    ${stageRows || '<div class="stage-empty">Nobody is on the stage right now</div>'}
                 </div>
                 <div class="stage-divider"></div>
                 <div class="stage-group pointer-events-auto" data-drop="audience" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, '${rid}')">
                     <div class="stage-group-label">Listeners</div>
-                    ${audienceRows || '<div class="stage-empty">No listeners</div>'}
+                    ${audienceRows || '<div class="stage-empty">No listeners right now</div>'}
                 </div>`;
         }
 
@@ -1443,11 +1443,7 @@
                 document.getElementById('inviteStageNote').classList.toggle('hidden', !isStage);
                 document.getElementById('inviteJoinLabel').innerText = isStage ? 'Join as Listener' : 'Join Conversation';
                 
-                const userList = document.getElementById('inviteUserList');
-                userList.innerHTML = '';
-                
-                uids.forEach(uid => {
-                    const u = data.users[uid];
+                const buildInviteUserCard = (u) => {
                     const userDiv = document.createElement('div');
                     userDiv.className = 'flex flex-col items-center gap-2 p-3 rounded-2xl bg-zinc-900/50 border border-zinc-800 min-w-[100px]';
                     userDiv.innerHTML = `
@@ -1456,8 +1452,37 @@
                         </div>
                         <span class="text-xs font-semibold text-zinc-300 truncate max-w-[80px]">${escapeHtml(u.nickname)}</span>
                     `;
-                    userList.appendChild(userDiv);
+                    return userDiv;
+                };
+
+                document.getElementById('inviteFlatBlock').classList.toggle('hidden', isStage);
+                document.getElementById('inviteStageBlock').classList.toggle('hidden', !isStage);
+                const userList = document.getElementById('inviteUserList');
+                const stageList = document.getElementById('inviteStageList');
+                const audienceList = document.getElementById('inviteAudienceList');
+                userList.innerHTML = '';
+                stageList.innerHTML = '';
+                audienceList.innerHTML = '';
+                const speakerSet = new Set(data.speakers || []);
+                let stageCount = 0;
+                let audienceCount = 0;
+
+                uids.forEach(uid => {
+                    const card = buildInviteUserCard(data.users[uid]);
+                    if (!isStage) {
+                        userList.appendChild(card);
+                    } else if (speakerSet.has(uid)) {
+                        stageList.appendChild(card);
+                        stageCount++;
+                    } else {
+                        audienceList.appendChild(card);
+                        audienceCount++;
+                    }
                 });
+                if (isStage) {
+                    document.getElementById('inviteStageEmpty').classList.toggle('hidden', stageCount > 0);
+                    document.getElementById('inviteAudienceEmpty').classList.toggle('hidden', audienceCount > 0);
+                }
                 
                 if (data.created_at > 0) {
                     const updateDuration = () => {
