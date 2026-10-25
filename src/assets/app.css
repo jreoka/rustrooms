@@ -2020,7 +2020,6 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 .btn-primary,
-.welcome-logo,
 .participant-count,
 .switch input:checked + .slider {
     background-image: var(--accent-grad);
@@ -2028,14 +2027,15 @@ video.active + .avatar-layer { display: none !important; }
     animation: accent-flow 10s ease-in-out infinite;
 }
 
-/* The flat hover shorthand would otherwise wipe the gradient. */
+/* The flat hover shorthand would otherwise wipe the gradient and
+   reset its size, making the gradient snap on hover. */
 .btn-primary:hover {
     background-image: var(--accent-grad);
+    background-size: 220% 220%;
 }
 
 @media (prefers-reduced-motion: reduce) {
     .btn-primary,
-    .welcome-logo,
     .participant-count,
     .switch input:checked + .slider {
         animation: none;
