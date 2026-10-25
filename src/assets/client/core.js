@@ -89,10 +89,8 @@
         let roomCreationPassword = sessionStorage.getItem('rustrooms_room_password');
         let workletLoadingPromise = null;
         let isLowBandwidthMode = false;
-        let isOnTheGoMode = false;
         let activeSpeakers = {};
         let peerLowBandwidthStatus = {};
-        let peerOnTheGoStatus = {};
         // Avatar payloads are stripped from room-list; this cache restores them
         // in the sidebar for users seen via existing-users / user-joined /
         // identify / user-update.
@@ -268,15 +266,6 @@
                     lightning.classList.add('hidden');
                 }
             }
-            const otgLightning = document.getElementById('onTheGoLowBandwidthLightning');
-            if (otgLightning) {
-                if (isLowBandwidthMode) {
-                    otgLightning.classList.remove('hidden');
-                } else {
-                    otgLightning.classList.add('hidden');
-                }
-            }
-            updateOnTheGoButtons();
         }
 
         async function handleLowBandwidthChange(checked) {
@@ -299,265 +288,10 @@
             }
         }
 
-        async function toggleOnTheGoLowBandwidth() {
-            await handleLowBandwidthChange(!isLowBandwidthMode);
-            if (isLowBandwidthMode) {
-                playNotificationSound('bandwidth_on');
-            } else {
-                playNotificationSound('bandwidth_off');
-            }
-        }
 
-        function handleOnTheGoChange(checked) {
-            isOnTheGoMode = checked;
-            const setupOtg = document.getElementById('setupOnTheGo');
-            const settingsOtg = document.getElementById('settingsOnTheGo');
-            if (setupOtg) setupOtg.checked = checked;
-            if (settingsOtg) settingsOtg.checked = checked;
-            savePreferences();
-            toggleOnTheGoMode(checked);
-        }
 
-        function toggleOnTheGoMode(enable, forceShow) {
-            isOnTheGoMode = enable;
-            const setupOtg = document.getElementById('setupOnTheGo');
-            const settingsOtg = document.getElementById('settingsOnTheGo');
-            if (setupOtg) setupOtg.checked = enable;
-            if (settingsOtg) settingsOtg.checked = enable;
 
-            const otgOverlay = document.getElementById('onTheGoOverlay');
-            if (otgOverlay) {
-                if (enable) {
-                    const configOverlay = document.getElementById('configOverlay');
-                    const settingsOverlay = document.getElementById('settingsOverlay');
-                    const configOpen = configOverlay && !configOverlay.classList.contains('hidden') && configOverlay.style.display !== 'none';
-                    const settingsOpen = settingsOverlay && !settingsOverlay.classList.contains('hidden');
 
-                    if (forceShow || (!configOpen && !settingsOpen)) {
-                        otgOverlay.classList.remove('hidden');
-                        
-                        // Try locking screen orientation to portrait
-                        if (screen.orientation && screen.orientation.lock) {
-                            screen.orientation.lock('portrait').catch(err => {
-                                console.log('Screen orientation lock failed or not supported:', err);
-                            });
-                        }
-                        
-                        // Auto-disable camera if active when enabling On-the-go mode
-                        const videoTracks = localStream ? localStream.getVideoTracks() : [];
-                        if (videoTracks.length > 0) {
-                            const track = videoTracks[0];
-                            track.stop();
-                            localStream.removeTrack(track);
-
-                            if (localStream._originalStream) {
-                                localStream._originalStream.getVideoTracks().forEach(t => t.stop());
-                            }
-
-                            const btnPreviewCam = document.getElementById('btnPreviewCam');
-                            if (btnPreviewCam) {
-                                btnPreviewCam.classList.add('active-red');
-                                btnPreviewCam.innerText = "Start Cam";
-                                const placeholder = document.getElementById('previewPlaceholder');
-                                if (placeholder) placeholder.style.display = 'flex';
-                            }
-
-                            const btnCam = document.getElementById('btnCam');
-                            if (btnCam) {
-                                btnCam.classList.add('active-red');
-                                btnCam.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M21 21l-3.5-3.5m-2-2l-2-2m-2-2l-2-2m-2-2l-3.5-3.5"></path><path d="M15 7h5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-5"></path><path d="M4 8v8a2 2 0 0 0 2 2h4.5"></path></svg>`;
-                            }
-
-                            if (ws && ws.readyState === WebSocket.OPEN) {
-                                ws.send(JSON.stringify({
-                                    type: 'cam-toggle',
-                                    data: { enabled: false, camVideoTrackId: null }
-                                }));
-                            }
-
-                            for (const userId in peers) {
-                                const pc = peers[userId];
-                                if (removePeerSender(pc, '_cameraVideoSender')) {
-                                    negotiate(userId, pc);
-                                }
-                            }
-
-                            const previewVideo = document.getElementById('previewVideo');
-                            if (previewVideo) previewVideo.srcObject = null;
-                            const localVideo = document.getElementById('localVideo');
-                            if (localVideo) localVideo.srcObject = null;
-
-                            pendingCamToggle = true;
-                            updateLocalAvatar();
-                            updateLocalMediaLayout();
-                        }
-                    }
-                } else {
-                    otgOverlay.classList.add('hidden');
-                    // Unlock screen orientation
-                    if (screen.orientation && screen.orientation.unlock) {
-                        try {
-                            screen.orientation.unlock();
-                        } catch(e) {}
-                    }
-                }
-            }
-            updateOnTheGoButtons();
-            savePreferences();
-            updateLocalLabel();
-
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'update-user',
-                    data: { isOnTheGoMode: enable, profileRev: profileRev }
-                }));
-            }
-        }
-
-        function updateOnTheGoButtons() {
-            const otgMicBtn = document.getElementById('btnOnTheGoMic');
-            const otgDeafenBtn = document.getElementById('btnOnTheGoDeafen');
-            const otgLbmBtn = document.getElementById('btnOnTheGoLowBandwidth');
-            const otgMicWrapper = document.getElementById('onTheGoMicIconWrapper');
-            const otgDeafenWrapper = document.getElementById('onTheGoDeafenIconWrapper');
-            const otgLbmWrapper = document.getElementById('onTheGoLowBandwidthIconWrapper');
-            const otgMicText = document.getElementById('onTheGoMicText');
-            const otgDeafenText = document.getElementById('onTheGoDeafenText');
-            const otgLbmText = document.getElementById('onTheGoLowBandwidthText');
-
-            const isMicMuted = localStream && localStream.getAudioTracks().length > 0 ? !localStream.getAudioTracks()[0].enabled : true;
-
-            if (otgMicBtn) {
-                if (isDeafened) {
-                    otgMicBtn.classList.add('bg-red-950', 'border-red-900', 'opacity-50', 'cursor-not-allowed');
-                    otgMicBtn.classList.remove('bg-red-600', 'hover:bg-red-700', 'border-red-500', 'bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-                    if (otgMicText) otgMicText.innerText = "Unmute";
-                    if (otgMicWrapper) {
-                        otgMicWrapper.innerHTML = `<svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg>`;
-                    }
-                } else if (isMicMuted) {
-                    otgMicBtn.classList.add('bg-red-600', 'hover:bg-red-700', 'border-red-500');
-                    otgMicBtn.classList.remove('bg-red-950', 'border-red-900', 'opacity-50', 'cursor-not-allowed', 'bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-                    if (otgMicText) otgMicText.innerText = "Unmute";
-                    if (otgMicWrapper) {
-                        otgMicWrapper.innerHTML = `<svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg>`;
-                    }
-                } else {
-                    otgMicBtn.classList.remove('bg-red-600', 'hover:bg-red-700', 'border-red-500', 'bg-red-950', 'border-red-900', 'opacity-50', 'cursor-not-allowed');
-                    otgMicBtn.classList.add('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-                    if (otgMicText) otgMicText.innerText = "Mute";
-                    if (otgMicWrapper) {
-                        otgMicWrapper.innerHTML = `<svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`;
-                    }
-                }
-            }
-
-            if (otgDeafenBtn) {
-                if (isDeafened) {
-                    otgDeafenBtn.classList.add('bg-red-600', 'hover:bg-red-700', 'border-red-500');
-                    otgDeafenBtn.classList.remove('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-                    if (otgDeafenText) otgDeafenText.innerText = "Undeafen";
-                    if (otgDeafenWrapper) {
-                        otgDeafenWrapper.innerHTML = `<svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M21 14a2 2 0 0 0-2-2h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2V14z"></path><path d="M3 14a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V14z"></path><path d="M20.4 10.4C20.2 6.5 17 3.5 13 3.1"></path><path d="M6.5 5.5A9 9 0 0 0 3 12"></path></svg>`;
-                    }
-                } else {
-                    otgDeafenBtn.classList.remove('bg-red-600', 'hover:bg-red-700', 'border-red-500');
-                    otgDeafenBtn.classList.add('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-                    if (otgDeafenText) otgDeafenText.innerText = "Deafen";
-                    if (otgDeafenWrapper) {
-                        otgDeafenWrapper.innerHTML = `<svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>`;
-                    }
-                }
-            }
-
-            if (otgLbmBtn) {
-                if (isLowBandwidthMode) {
-                    otgLbmBtn.classList.add('bg-amber-600', 'hover:bg-amber-700', 'border-amber-500');
-                    otgLbmBtn.classList.remove('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-                    if (otgLbmText) otgLbmText.innerText = "Low Bandwidth Active";
-                    if (otgLbmWrapper) {
-                        otgLbmWrapper.innerHTML = `<svg class="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>`;
-                    }
-                } else {
-                    otgLbmBtn.classList.remove('bg-amber-600', 'hover:bg-amber-700', 'border-amber-500');
-                    otgLbmBtn.classList.add('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-                    if (otgLbmText) otgLbmText.innerText = "Low Bandwidth Mode";
-                    if (otgLbmWrapper) {
-                        otgLbmWrapper.innerHTML = `<svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>`;
-                    }
-                }
-            }
-        }
-
-        function updateOnTheGoSpeakingIndicator() {
-            if (!isOnTheGoMode) return;
-            
-            let maxVol = 0;
-            let speakerId = null;
-            for (const id in activeSpeakers) {
-                if (activeSpeakers[id] > maxVol) {
-                    maxVol = activeSpeakers[id];
-                    speakerId = id;
-                }
-            }
-
-            const otgName = document.getElementById('onTheGoSpeakingName');
-            const otgAvatar = document.getElementById('onTheGoAvatar');
-            const otgPlaceholder = document.getElementById('onTheGoAvatarPlaceholder');
-            const otgGlow = document.getElementById('onTheGoSpeakingGlow');
-            const otgAvatarWrapper = document.getElementById('onTheGoAvatarWrapper');
-
-            if (!speakerId) {
-                if (otgName) otgName.innerText = "No one speaking";
-                if (otgAvatar) otgAvatar.classList.add('hidden');
-                if (otgPlaceholder) otgPlaceholder.classList.remove('hidden');
-                if (otgGlow) {
-                    otgGlow.classList.remove('scale-105', 'opacity-100');
-                    otgGlow.classList.add('scale-100', 'opacity-0');
-                }
-                if (otgAvatarWrapper) otgAvatarWrapper.classList.remove('otg-speaking-pulse');
-                return;
-            }
-
-            let name = "Guest";
-            let avatarUrl = null;
-
-            if (speakerId === 'local') {
-                name = userNickname || "You";
-                avatarUrl = userAvatar;
-            } else {
-                const rawUserId = speakerId.startsWith('wrapper-') ? speakerId.replace('wrapper-', '') : speakerId;
-                const wrapper = document.getElementById(`wrapper-${rawUserId}`);
-                if (wrapper) {
-                    const labelEl = wrapper.querySelector('.name-tag');
-                    if (labelEl) {
-                        name = labelEl.textContent.trim();
-                    }
-                    const imgEl = wrapper.querySelector('.avatar-center img');
-                    if (imgEl && !imgEl.classList.contains('hidden')) {
-                        avatarUrl = imgEl.src;
-                    }
-                }
-            }
-
-            if (otgName) otgName.innerText = name;
-            if (avatarUrl) {
-                if (otgAvatar) {
-                    otgAvatar.src = avatarUrl;
-                    otgAvatar.classList.remove('hidden');
-                }
-                if (otgPlaceholder) otgPlaceholder.classList.add('hidden');
-            } else {
-                if (otgAvatar) otgAvatar.classList.add('hidden');
-                if (otgPlaceholder) otgPlaceholder.classList.remove('hidden');
-            }
-
-            if (otgGlow) {
-                otgGlow.classList.remove('scale-100', 'opacity-0');
-                otgGlow.classList.add('scale-105', 'opacity-100');
-            }
-            if (otgAvatarWrapper) otgAvatarWrapper.classList.add('otg-speaking-pulse');
-        }
 
         function setActiveTabSession() {
             try {
@@ -787,21 +521,6 @@
                     pingContainer.classList.add('ping-fair');
                 } else {
                     pingContainer.classList.add('ping-poor');
-                }
-            }
-
-            const otgPingContainer = document.getElementById('onTheGoPingContainer');
-            const otgPingText = document.getElementById('onTheGoPingText');
-            if (otgPingContainer && otgPingText) {
-                otgPingContainer.classList.remove('hidden');
-                otgPingText.innerText = `${pingMs}ms`;
-                otgPingContainer.classList.remove('ping-good', 'ping-fair', 'ping-poor');
-                if (pingMs < 100) {
-                    otgPingContainer.classList.add('ping-good');
-                } else if (pingMs < 250) {
-                    otgPingContainer.classList.add('ping-fair');
-                } else {
-                    otgPingContainer.classList.add('ping-poor');
                 }
             }
         }
@@ -1717,7 +1436,6 @@
                     }
                 }
 
-                updateOnTheGoSpeakingIndicator();
                 requestAnimationFrame(checkAudio);
             }
             checkAudio();
@@ -1814,13 +1532,6 @@
                         if (setupLBM) setupLBM.checked = isLowBandwidthMode;
                         if (settingsLBM) settingsLBM.checked = isLowBandwidthMode;
                         updateLowBandwidthBadgeVisibility();
-                    }
-                    if (data.isOnTheGoMode !== undefined) {
-                        isOnTheGoMode = data.isOnTheGoMode;
-                        const setupOtg = document.getElementById('setupOnTheGo');
-                        const settingsOtg = document.getElementById('settingsOnTheGo');
-                        if (setupOtg) setupOtg.checked = isOnTheGoMode;
-                        if (settingsOtg) settingsOtg.checked = isOnTheGoMode;
                     }
                 } catch (e) { console.error("Load pref error", e); }
             }
@@ -1935,9 +1646,7 @@
                     isCamOff: isCamOff,
                     isDeafened: isDeafened,
                     facingMode: currentFacingMode,
-                    isLowBandwidthMode: isLowBandwidthMode,
-                    isOnTheGoMode: isOnTheGoMode
-                }));
+                    isLowBandwidthMode: isLowBandwidthMode                }));
             } catch(e) {
                 console.warn('Could not save preferences to localStorage:', e.message);
             }
@@ -1993,13 +1702,6 @@
                 if (setupLBM) setupLBM.checked = isLowBandwidthMode;
                 if (settingsLBM) settingsLBM.checked = isLowBandwidthMode;
                 if (typeof updateLowBandwidthBadgeVisibility === 'function') updateLowBandwidthBadgeVisibility();
-            }
-            if (status.isOnTheGoMode !== undefined) {
-                isOnTheGoMode = !!status.isOnTheGoMode;
-                const setupOtg = document.getElementById('setupOnTheGo');
-                const settingsOtg = document.getElementById('settingsOnTheGo');
-                if (setupOtg) setupOtg.checked = isOnTheGoMode;
-                if (settingsOtg) settingsOtg.checked = isOnTheGoMode;
             }
             if (typeof updateLocalLabel === 'function') updateLocalLabel();
             savePreferences(false);
@@ -3147,10 +2849,6 @@
             sessionStorage.setItem('rustrooms_last_room_id', roomId);
             sessionStorage.setItem('rustrooms_last_channel_id', channelId);
             recordRecentCall();
-
-            if (isOnTheGoMode) {
-                toggleOnTheGoMode(true, true);
-            }
 
             await requestWakeLock();
         }

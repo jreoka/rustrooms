@@ -18,8 +18,6 @@ pub(crate) struct UserStatus {
     #[serde(default)]
     pub is_low_bandwidth_mode: bool,
     #[serde(default)]
-    pub is_on_the_go_mode: bool,
-    #[serde(default)]
     pub is_mobile: bool,
     // Monotonic revision counter for the persisted profile (nickname, avatar,
     // modes). The client bumps it on every local save and sends it with join
@@ -198,7 +196,6 @@ pub(crate) fn reconcile_join_status(
             is_deafened: prev.is_deafened,
             is_screen_sharing: client_status.is_screen_sharing,
             is_low_bandwidth_mode: prev.is_low_bandwidth_mode,
-            is_on_the_go_mode: prev.is_on_the_go_mode,
             is_mobile: client_status.is_mobile,
             profile_rev: prev.profile_rev,
         },
@@ -298,7 +295,6 @@ mod tests {
             is_deafened: false,
             is_screen_sharing: false,
             is_low_bandwidth_mode: false,
-            is_on_the_go_mode: false,
             is_mobile: false,
             profile_rev: rev,
         }

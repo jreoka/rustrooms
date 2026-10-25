@@ -161,15 +161,8 @@
 
 /* A few spots hardcode white text for the dark scheme; on light
    surfaces they take the regular on-surface color instead. */
-:root[data-theme="light"] #inviteChannelName,
-:root[data-theme="light"] #onTheGoSpeakingName {
+:root[data-theme="light"] #inviteChannelName {
     color: var(--md-on-surface);
-}
-:root[data-theme="light"] #onTheGoOverlay button {
-    color: var(--md-on-surface);
-}
-:root[data-theme="light"] #onTheGoOverlay button.bg-red-600 {
-    color: #FFFFFF;
 }
 
 /* Kill every Tailwind/legacy shadow utility — flat, no elevation shadows. */
@@ -1835,117 +1828,6 @@ video.active + .avatar-layer { display: none !important; }
 }
 #appLayout main > div:first-child { z-index: 1; }
 #appLayout #emptyState { z-index: 1; }
-
-/* ============================================================
- * On-the-go mode
- * ============================================================ */
-#onTheGoOverlay {
-    background: var(--bg-primary);
-}
-#otgOrientationWarning {
-    background: var(--md-surface-container-low);
-}
-#onTheGoAvatarWrapper {
-    background: var(--md-surface-container-high) !important;
-    border: 2px solid var(--md-outline-variant) !important;
-}
-#onTheGoSpeakingGlow {
-    border: 2px solid var(--md-primary) !important;
-}
-.otg-speaking-pulse {
-    border-color: var(--md-primary) !important;
-    box-shadow: 0 0 0 2px var(--md-primary);
-    animation: none;
-}
-.otg-rotate-anim {
-    animation: otgRotateDevice 2.5s ease-in-out infinite;
-    transform-origin: center;
-}
-@keyframes otgRotateDevice {
-    0% { transform: rotate(0deg); }
-    30%, 100% { transform: rotate(-90deg); }
-}
-@media (orientation: landscape) and (max-width: 1024px) {
-    #otgOrientationWarning { display: flex !important; }
-}
-
-/* Height-based OTG compaction */
-@media (max-height: 760px) {
-    #onTheGoOverlay { padding: 1rem !important; gap-y: 1rem !important; }
-    #onTheGoOverlay .mt-4 { margin-top: 0.5rem !important; }
-    #onTheGoOverlay .pt-4 { padding-top: 0.5rem !important; }
-    #onTheGoOverlay .pt-6 { padding-top: 0.5rem !important; }
-    #onTheGoOverlay .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-        --tw-space-y-reverse: 0 !important;
-        margin-top: 0.75rem !important;
-        margin-bottom: 0px !important;
-    }
-    #onTheGoOverlay .space-y-3 > :not([hidden]) ~ :not([hidden]) {
-        --tw-space-y-reverse: 0 !important;
-        margin-top: 0.5rem !important;
-        margin-bottom: 0px !important;
-    }
-    #onTheGoAvatarWrapper { width: 6rem !important; height: 6rem !important; }
-    #onTheGoAvatarPlaceholder { font-size: 3rem !important; }
-    #onTheGoSpeakingName { font-size: 1.125rem !important; }
-    #onTheGoOverlay button {
-        padding-top: 0.875rem !important;
-        padding-bottom: 0.875rem !important;
-        border-radius: 0.5rem !important;
-    }
-    #onTheGoOverlay button svg { width: 1.5rem !important; height: 1.5rem !important; }
-    #onTheGoOverlay button span { font-size: 0.875rem !important; }
-}
-@media (max-height: 640px) {
-    #onTheGoOverlay { padding: 0.75rem !important; gap-y: 0.75rem !important; }
-    #onTheGoOverlay .mt-4, #onTheGoOverlay .mt-8 { margin-top: 0.25rem !important; }
-    #onTheGoOverlay .pt-4, #onTheGoOverlay .pt-6 { padding-top: 0.25rem !important; }
-    #onTheGoOverlay .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-        --tw-space-y-reverse: 0 !important;
-        margin-top: 0.5rem !important;
-        margin-bottom: 0px !important;
-    }
-    #onTheGoOverlay .space-y-3 > :not([hidden]) ~ :not([hidden]) {
-        --tw-space-y-reverse: 0 !important;
-        margin-top: 0.25rem !important;
-        margin-bottom: 0px !important;
-    }
-    #onTheGoAvatarWrapper { width: 4.5rem !important; height: 4.5rem !important; }
-    #onTheGoAvatarPlaceholder { font-size: 2.25rem !important; }
-    #onTheGoSpeakingName { font-size: 1rem !important; }
-    #onTheGoOverlay button {
-        padding-top: 0.625rem !important;
-        padding-bottom: 0.625rem !important;
-        border-radius: 0.5rem !important;
-    }
-    #onTheGoOverlay button svg { width: 1.25rem !important; height: 1.25rem !important; }
-    #onTheGoOverlay button span { font-size: 0.8rem !important; }
-}
-@media (max-height: 540px) {
-    #onTheGoOverlay { padding: 0.5rem !important; gap-y: 0.5rem !important; }
-    #onTheGoOverlay .mt-4, #onTheGoOverlay .mt-8 { margin-top: 0px !important; }
-    #onTheGoOverlay .pt-4, #onTheGoOverlay .pt-6 { padding-top: 0px !important; }
-    #onTheGoOverlay .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-        --tw-space-y-reverse: 0 !important;
-        margin-top: 0.25rem !important;
-        margin-bottom: 0px !important;
-    }
-    #onTheGoOverlay .space-y-3 > :not([hidden]) ~ :not([hidden]) {
-        --tw-space-y-reverse: 0 !important;
-        margin-top: 0.125rem !important;
-        margin-bottom: 0px !important;
-    }
-    #onTheGoAvatarWrapper { width: 3.5rem !important; height: 3.5rem !important; }
-    #onTheGoAvatarPlaceholder { font-size: 1.75rem !important; }
-    #onTheGoSpeakingName { font-size: 0.875rem !important; }
-    #onTheGoOverlay button {
-        padding-top: 0.5rem !important;
-        padding-bottom: 0.5rem !important;
-        border-radius: 0.5rem !important;
-    }
-    #onTheGoOverlay button svg { width: 1.125rem !important; height: 1.125rem !important; }
-    #onTheGoOverlay button span { font-size: 0.75rem !important; }
-}
 
 /* ============================================================
  * Utility bits

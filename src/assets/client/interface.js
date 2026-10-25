@@ -280,20 +280,11 @@
         function updateStatus(state, message) {
             statusText.innerText = message;
             connectionDot.className = 'connection-dot ' + state;
-
-            const otgDot = document.getElementById('onTheGoConnectionDot');
-            const otgText = document.getElementById('onTheGoStatusText');
-            if (otgText) otgText.innerText = message;
-            if (otgDot) {
-                otgDot.className = 'connection-dot ' + state;
-            }
         }
 
         function showReconnectButtons() {
-            ['btnReconnect', 'onTheGoBtnReconnect'].forEach(id => {
-                const btn = document.getElementById(id);
-                if (btn) btn.classList.remove('hidden');
-            });
+            const btn = document.getElementById('btnReconnect');
+            if (btn) btn.classList.remove('hidden');
         }
 
         function updateConnectionStatus() {
@@ -755,7 +746,7 @@
 
             if (e.key === 'Escape') {
                 // Close the top-most thing: popup menu, stats window,
-                // settings, then safe modal overlays, then on-the-go mode.
+                // settings, then safe modal overlays.
                 // (Deliberately no "typing" guard: Escape inside a modal's
                 // own text field should still dismiss that modal.)
                 closeUserVolumeMenu();
@@ -785,12 +776,6 @@
                         closer();
                         return;
                     }
-                }
-
-                const otgOverlay = document.getElementById('onTheGoOverlay');
-                if (otgOverlay && !otgOverlay.classList.contains('hidden') && typeof toggleOnTheGoMode === 'function') {
-                    toggleOnTheGoMode(false);
-                    return;
                 }
                 return;
             }
@@ -1152,11 +1137,6 @@
                                         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                                     </div>
                                 ` : ''}
-                                ${u.isOnTheGoMode ? `
-                                    <div class="status-icon active" style="color: #60a5fa;" title="On-the-go Mode Active">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" x2="12.01" y1="18" y2="18"></line></svg>
-                                    </div>
-                                ` : ''}
                             </div>
                         </div>
                     `;
@@ -1355,21 +1335,6 @@
 
         if (roomId) {
             loadPreferences().then(() => {
-                // Enable On the Go mode options only for mobile and tablet devices
-                if (isMobileDevice()) {
-                    const btnOnTheGo = document.getElementById('btnOnTheGo');
-                    if (btnOnTheGo) btnOnTheGo.classList.remove('hidden');
-
-                    const setupOtgRow = document.getElementById('setupOnTheGoRow');
-                    if (setupOtgRow) setupOtgRow.classList.remove('hidden');
-
-                    const settingsOtgRow = document.getElementById('settingsOnTheGoRow');
-                    if (settingsOtgRow) settingsOtgRow.classList.remove('hidden');
-                } else {
-                    // Ensure On-the-go mode setting is inactive on desktop
-                    isOnTheGoMode = false;
-                }
-
                 const setupDone = sessionStorage.getItem('rustrooms_setup_done') === 'true';
                 const welcomed = sessionStorage.getItem('rustrooms_welcomed') === 'true';
 

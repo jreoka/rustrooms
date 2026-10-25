@@ -270,17 +270,6 @@
                                 <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
                             </label>
                         </div>
-                        <div id="setupOnTheGoRow" class="hidden m3-row flex items-center justify-between">
-                            <div class="flex flex-col">
-                                <span class="text-sm font-semibold text-white">On the Go Mode</span>
-                                <span class="text-xs text-zinc-400">Simplify UI with big buttons and hide video</span>
-                            </div>
-                            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
-                                <input type="checkbox" id="setupOnTheGo" onchange="handleOnTheGoChange(this.checked)" class="sr-only peer">
-                                <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
-                            </label>
-                        </div>
-                    </div>
 
                     <button id="btnJoin" onclick="joinRoom()" disabled class="btn-primary w-full py-3.5 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                         Loading...
@@ -370,17 +359,6 @@
                                     <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
                                 </label>
                             </div>
-                            <div id="settingsOnTheGoRow" class="hidden m3-row flex items-center justify-between">
-                                <div class="flex flex-col">
-                                    <span class="text-sm font-semibold text-white">On the Go Mode</span>
-                                    <span class="text-xs text-zinc-400">Simplify UI with big buttons and hide video</span>
-                                </div>
-                                <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
-                                    <input type="checkbox" id="settingsOnTheGo" onchange="handleOnTheGoChange(this.checked)" class="sr-only peer">
-                                    <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
-                                </label>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -393,102 +371,6 @@
         </div>
     </div>
 
-    <!-- On-the-go Mode Overlay -->
-    <div id="onTheGoOverlay" class="fixed inset-0 z-[150] flex flex-col justify-between p-4 sm:p-6 gap-y-8 overflow-y-auto hidden" style="background: var(--bg-primary);">
-        <!-- Orientation Warning Overlay (only visible in landscape mode on mobile/tablet) -->
-        <div id="otgOrientationWarning" class="fixed inset-0 z-[200] flex-col items-center justify-center p-6 bg-black text-center hidden">
-            <div class="mb-6 otg-rotate-anim">
-                <svg class="w-20 h-20 text-zinc-400 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 0 0 6 3.75v16.5a2.25 2.25 0 0 0 2.25 2.25h7.5A2.25 2.25 0 0 0 18 20.25V3.75a2.25 2.25 0 0 0-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-6 15h9" />
-                </svg>
-            </div>
-            <h2 class="text-xl font-bold text-white mb-2">Rotate to Portrait</h2>
-            <p class="text-zinc-500 text-sm max-w-xs mx-auto">On-the-go mode is optimized exclusively for portrait orientation. Please rotate your device.</p>
-        </div>
-
-        <!-- Top section: Status / Speaking Info -->
-        <div class="flex flex-col items-center text-center mt-4 sm:mt-8 space-y-4 flex-shrink-0">
-            <div class="status-pill-wrapper" id="onTheGoStatusPillWrapper">
-                <div class="status-pill px-3 md:px-4 py-1.5 md:py-2 rounded-full flex items-center justify-center gap-2 md:gap-2.5 flex-shrink-0 h-8 md:h-10">
-                    <div id="onTheGoConnectionDot" class="connection-dot"></div>
-                    <!-- Orange lightning icon -->
-                    <svg id="onTheGoLowBandwidthLightning" class="w-4 h-4 text-amber-500 hidden animate-pulse" fill="currentColor" viewBox="0 0 24 24" style="color: #f59e0b;" title="Low Bandwidth Mode Active">
-                        <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span id="onTheGoStatusText" class="text-xs md:text-sm font-medium" style="color: var(--text-primary);">Connected</span>
-                    <button id="onTheGoBtnReconnect" onclick="event.stopPropagation(); retryConnection()" class="hidden ml-1 p-1 rounded-lg transition-all hover:bg-white/10" style="color: var(--text-muted);" title="Retry Connection">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-                    </button>
-                    <div id="onTheGoPingContainer" class="ping-container hidden !ml-0 !pl-1.5 md:!ml-0 md:!pl-2 border-l !border-[var(--border-subtle)]">
-                        <span id="onTheGoPingText" class="tabular-nums shrink-0 mr-1 md:mr-1.5">0ms</span>
-                        <div id="onTheGoPingBars" class="ping-bars">
-                            <div class="ping-bar ping-bar-1"></div>
-                            <div class="ping-bar ping-bar-2"></div>
-                            <div class="ping-bar ping-bar-3"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="flex flex-col items-center space-y-3 pt-4 sm:pt-6">
-                <!-- Large voice activity / speaking avatar container -->
-                <div id="onTheGoAvatarWrapper" class="w-28 h-28 sm:w-32 sm:h-32 rounded-full flex items-center justify-center relative bg-zinc-800 border-2 border-zinc-700 shadow-2xl transition-all duration-300">
-                    <img id="onTheGoAvatar" src="" class="w-full h-full object-cover rounded-full hidden" draggable="false">
-                    <span id="onTheGoAvatarPlaceholder" class="text-zinc-400 flex"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-12 h-12 sm:w-16 sm:h-16"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg></span>
-                    <!-- Speaking indicator wave/glow -->
-                    <div id="onTheGoSpeakingGlow" class="absolute inset-0 rounded-full border-4 border-indigo-500 scale-100 opacity-0 transition-all duration-300"></div>
-                </div>
-                <div class="space-y-1">
-                    <h3 id="onTheGoSpeakingName" class="text-xl font-bold text-white">No one speaking</h3>
-                    <p class="text-zinc-500 text-sm">Tap buttons below to control</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Bottom section: Big buttons taking up the whole lower portion of the screen -->
-        <div class="grid grid-cols-2 gap-3 mb-4 sm:mb-8 w-full max-w-md mx-auto flex-shrink-0">
-            <!-- Huge Mic Toggle Button -->
-            <button id="btnOnTheGoMic" onclick="toggleMic()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
-                <div id="onTheGoMicIconWrapper">
-                    <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-                </div>
-                <span id="onTheGoMicText" class="truncate w-full px-1">Mute</span>
-            </button>
-
-            <!-- Huge Deafen/Speaker Toggle Button -->
-            <button id="btnOnTheGoDeafen" onclick="toggleDeafen()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
-                <div id="onTheGoDeafenIconWrapper">
-                    <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>
-                </div>
-                <span id="onTheGoDeafenText" class="truncate w-full px-1">Deafen</span>
-            </button>
-
-            <!-- Huge Low Bandwidth Toggle Button -->
-            <button id="btnOnTheGoLowBandwidth" onclick="toggleOnTheGoLowBandwidth()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
-                <div id="onTheGoLowBandwidthIconWrapper">
-                    <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                </div>
-                <span id="onTheGoLowBandwidthText" class="truncate w-full px-1">Low Bandwidth Mode</span>
-            </button>
-
-            <!-- Huge Copy Invite Link Button -->
-            <button id="btnOnTheGoCopy" onclick="copyLink()" class="flex flex-col items-center justify-center text-center gap-1.5 py-4 px-2 rounded-lg font-bold text-sm sm:text-base text-white transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
-                <div id="onTheGoCopyIconWrapper">
-                    <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                </div>
-                <span id="onTheGoCopyText" class="truncate w-full px-1">Copy Invite Link</span>
-            </button>
-
-            <!-- Exit On-the-go -->
-            <button onclick="toggleOnTheGoMode(false)" class="flex flex-col items-center justify-center py-4 rounded-lg font-bold text-sm text-zinc-300 transition-all bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 active:scale-[0.98]">
-                <span>Exit On-the-go</span>
-            </button>
-
-            <!-- Leave Call -->
-            <button onclick="leaveRoom()" class="flex flex-col items-center justify-center py-4 rounded-lg font-bold text-sm text-white transition-all bg-red-600 hover:bg-red-700 active:scale-[0.98] shadow-lg shadow-red-600/20">
-                <span>Leave Call</span>
-            </button>
-        </div>
-    </div>
 
     <div id="appLayout" class="hidden flex-col h-full w-full">
         <div class="app-topbar flex-none z-40 flex justify-between items-center gap-2 md:gap-4 pl-3 md:pl-4">
@@ -584,9 +466,6 @@
                 </button>
                 <button class="control-btn" id="btnShare" onclick="toggleScreen()" title="Share Screen" aria-label="Share Screen">
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-                </button>
-                <button class="control-btn hidden" id="btnOnTheGo" onclick="toggleOnTheGoMode(true)" title="On the Go" aria-label="On the Go Mode">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
                 </button>
                 <button class="control-btn" onclick="openSettings()" title="Settings" aria-label="Settings">
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>

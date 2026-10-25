@@ -100,7 +100,6 @@
                                     isMuted: isMuted,
                                     isDeafened: isDeafened,
                                     isLowBandwidthMode: isLowBandwidthMode,
-                                    isOnTheGoMode: isOnTheGoMode,
                                     isMobile: isMobileClient,
                                     password: roomCreationPassword
                                 }
@@ -185,9 +184,6 @@
                                                 if (user.status.isLowBandwidthMode !== undefined) {
                                                     peerLowBandwidthStatus[user.id] = user.status.isLowBandwidthMode;
                                                 }
-                                                if (user.status.isOnTheGoMode !== undefined) {
-                                                    peerOnTheGoStatus[user.id] = user.status.isOnTheGoMode;
-                                                }
                                                 if (peers[user.id]) {
                                                     updatePeerInfo(user.id, user.status.nickname, user.status.avatar, user.status.isMuted, user.status.isDeafened, user.status.isGif, user.status.staticFrame);
                                                 } else {
@@ -219,9 +215,6 @@
                                         if (msg.data.isLowBandwidthMode !== undefined) {
                                             peerLowBandwidthStatus[msg.userId] = msg.data.isLowBandwidthMode;
                                             updateAllSenderBitrates();
-                                        }
-                                        if (msg.data.isOnTheGoMode !== undefined) {
-                                            peerOnTheGoStatus[msg.userId] = msg.data.isOnTheGoMode;
                                         }
 
                                         if (peers[msg.userId]) {
@@ -264,8 +257,7 @@
                                                 isMuted: myMuted,
                                                 isDeafened: isDeafened,
                                                 isLowBandwidthMode: isLowBandwidthMode,
-                                                isOnTheGoMode: isOnTheGoMode,
-                                                isMobile: isMobileClient
+                                                            isMobile: isMobileClient
                                             }
                                         }));
                                     } catch (e) { console.error("Error processing user-joined:", e); }
@@ -282,7 +274,6 @@
                                         delete peerMicTrackId[msg.userId];
                                         delete peerScreenAudioTrackId[msg.userId];
                                         delete peerLowBandwidthStatus[msg.userId];
-                                        delete peerOnTheGoStatus[msg.userId];
                                     }
                                     break;
                                 case 'user-kicked':
@@ -303,7 +294,6 @@
                                         delete peerMicTrackId[msg.userId];
                                         delete peerScreenAudioTrackId[msg.userId];
                                         delete peerLowBandwidthStatus[msg.userId];
-                                        delete peerOnTheGoStatus[msg.userId];
                                         updateRoomListUI();
                                     }
                                     break;
@@ -325,9 +315,6 @@
                                      if (msg.data.isLowBandwidthMode !== undefined) {
                                          peerLowBandwidthStatus[msg.userId] = msg.data.isLowBandwidthMode;
                                          updateAllSenderBitrates();
-                                     }
-                                     if (msg.data.isOnTheGoMode !== undefined) {
-                                         peerOnTheGoStatus[msg.userId] = msg.data.isOnTheGoMode;
                                      }
                                      updatePeerInfo(msg.userId, msg.data.nickname, msg.data.avatar, msg.data.isMuted, msg.data.isDeafened, msg.data.isGif, msg.data.staticFrame);
                                     break;
@@ -386,9 +373,6 @@
                                         if (msg.data.isLowBandwidthMode !== undefined) {
                                             peerLowBandwidthStatus[msg.userId] = msg.data.isLowBandwidthMode;
                                             updateAllSenderBitrates();
-                                        }
-                                        if (msg.data.isOnTheGoMode !== undefined) {
-                                            peerOnTheGoStatus[msg.userId] = msg.data.isOnTheGoMode;
                                         }
                                         if (identifiedScreenAudio !== undefined) {
                                             peerScreenHasAudio[msg.userId] = identifiedScreenAudio;
@@ -560,8 +544,7 @@
             }
 
             const btns = [
-                document.getElementById('btnReconnect'),
-                document.getElementById('onTheGoBtnReconnect')
+                document.getElementById('btnReconnect')
             ];
             btns.forEach(btn => {
                 if (btn) {
@@ -667,15 +650,6 @@
                         `;
                     }
 
-                    const isPeerOTG = (userId === 'local') ? isOnTheGoMode : (peerOnTheGoStatus[userId] === true);
-                    if (isPeerOTG) {
-                        hasIcons = true;
-                        iconsHTML += `
-                            <span class="text-blue-400" title="On-the-go Mode Active">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" x2="12.01" y1="18" y2="18"></line></svg>
-                            </span>
-                        `;
-                    }
 
                     if (hasIcons) {
                         statusContainer.classList.remove('hidden');
@@ -1937,17 +1911,6 @@
             if (mainApp) mainApp.style.display = 'none';
             if (taskbar) taskbar.style.display = 'none';
 
-            // Hide the On-the-go overlay visually, but preserve the setting
-            const otgOverlay = document.getElementById('onTheGoOverlay');
-            if (otgOverlay) {
-                otgOverlay.classList.add('hidden');
-                // Unlock screen orientation
-                if (screen.orientation && screen.orientation.unlock) {
-                    try {
-                        screen.orientation.unlock();
-                    } catch(e) {}
-                }
-            }
 
             // Reset AudioWorklet cached promise to support new AudioContext
             workletLoadingPromise = null;
@@ -1959,30 +1922,19 @@
             // Reset speaker tracking
             activeSpeakers = {};
             peerLowBandwidthStatus = {};
-            peerOnTheGoStatus = {};
 
             // Hide/reset status pill elements to pristine states
             const reconnectBtn = document.getElementById('btnReconnect');
             if (reconnectBtn) reconnectBtn.classList.add('hidden');
-            const otgReconnectBtn = document.getElementById('onTheGoBtnReconnect');
-            if (otgReconnectBtn) otgReconnectBtn.classList.add('hidden');
 
             const pingContainer = document.getElementById('pingContainer');
             if (pingContainer) pingContainer.classList.add('hidden');
-            const otgPingContainer = document.getElementById('onTheGoPingContainer');
-            if (otgPingContainer) otgPingContainer.classList.add('hidden');
 
             const lightning = document.getElementById('lowBandwidthLightning');
             if (lightning) lightning.classList.add('hidden');
-            const otgLightning = document.getElementById('onTheGoLowBandwidthLightning');
-            if (otgLightning) otgLightning.classList.add('hidden');
 
             statusText.innerText = 'Waiting...';
             connectionDot.className = 'connection-dot';
-            const otgStatusText = document.getElementById('onTheGoStatusText');
-            if (otgStatusText) otgStatusText.innerText = 'Connected';
-            const otgDot = document.getElementById('onTheGoConnectionDot');
-            if (otgDot) otgDot.className = 'connection-dot';
 
             sessionStorage.removeItem('rustrooms_setup_done');
             sessionStorage.removeItem('rustrooms_last_room_id');
@@ -2013,7 +1965,6 @@
                     btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`;
                 }
                 updateLocalLabel();
-                updateOnTheGoButtons();
 
                 if (track.enabled) {
                     const screenAudioTrack = screenStream?.getAudioTracks()[0];
@@ -2202,7 +2153,6 @@
                     }
                 }));
             }
-            updateOnTheGoButtons();
         }
 
         let camToggleInProgress = false;
@@ -2695,13 +2645,6 @@
                 `;
             }
 
-            if (isOnTheGoMode) {
-                statusIcons += `
-                    <span class="ml-1.5 inline-flex items-center text-blue-400" title="On-the-go Mode Active">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" x2="12.01" y1="18" y2="18"></line></svg>
-                    </span>
-                `;
-            }
 
             label.innerHTML = `<span class="flex items-center">${escapeHtml(userNickname)} (You)${statusIcons}</span>`;
         }
@@ -2728,7 +2671,6 @@
             }
 
             const btn = document.getElementById('btnCopy');
-            const otgBtn = document.getElementById('btnOnTheGoCopy');
 
             if (btn && !btn.classList.contains('copy-btn-copied')) {
                 const originalHTML = btn.innerHTML;
@@ -2744,23 +2686,5 @@
                 }, 2000);
             }
 
-            if (otgBtn && !otgBtn.classList.contains('copy-btn-copied')) {
-                const originalHTML = otgBtn.innerHTML;
-                const originalClass = otgBtn.className;
-
-                otgBtn.innerHTML = `
-                    <div id="onTheGoCopyIconWrapper">
-                        <svg class="w-7 h-7" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    </div>
-                    <span id="onTheGoCopyText">Copied!</span>
-                `;
-                otgBtn.classList.add('copy-btn-copied');
-                otgBtn.classList.remove('bg-zinc-800', 'hover:bg-zinc-700', 'border-zinc-700');
-
-                setTimeout(() => {
-                    otgBtn.innerHTML = originalHTML;
-                    otgBtn.className = originalClass;
-                }, 2000);
-            }
         }
 

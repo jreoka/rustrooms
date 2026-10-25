@@ -47,8 +47,6 @@
 
             const settingsLBM = document.getElementById('settingsLowBandwidth');
             if (settingsLBM) settingsLBM.checked = isLowBandwidthMode;
-            const settingsOtg = document.getElementById('settingsOnTheGo');
-            if (settingsOtg) settingsOtg.checked = isOnTheGoMode;
 
             const removeBtn = document.getElementById('btnRemoveSettingsAvatar');
             if (userAvatar) {
@@ -78,9 +76,6 @@
         function closeSettings() {
             hideOverlayAnimated(settingsOverlay);
             if (settingsMeterFrameId) cancelAnimationFrame(settingsMeterFrameId);
-            if (isOnTheGoMode) {
-                toggleOnTheGoMode(true, true);
-            }
         }
 
         function handleSettingsAvatarUpload(input) {

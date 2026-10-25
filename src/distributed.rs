@@ -13,7 +13,6 @@ pub(crate) fn distributed_user_data(status: &UserStatus, created_at: u64) -> ser
         "isDeafened": status.is_deafened,
         "screenEnabled": status.is_screen_sharing,
         "isLowBandwidthMode": status.is_low_bandwidth_mode,
-        "isOnTheGoMode": status.is_on_the_go_mode,
         "isMobile": status.is_mobile,
         "profileRev": status.profile_rev,
         "createdAt": created_at,
@@ -911,7 +910,6 @@ fn presence_status(status: &UserStatus) -> UserStatus {
         is_deafened: status.is_deafened,
         is_screen_sharing: status.is_screen_sharing,
         is_low_bandwidth_mode: status.is_low_bandwidth_mode,
-        is_on_the_go_mode: status.is_on_the_go_mode,
         is_mobile: status.is_mobile,
         profile_rev: status.profile_rev,
     }
@@ -1037,7 +1035,6 @@ mod tests {
             is_deafened: false,
             is_screen_sharing: false,
             is_low_bandwidth_mode: false,
-            is_on_the_go_mode: false,
             is_mobile: false,
             profile_rev: 0,
         }
@@ -1118,7 +1115,6 @@ mod tests {
         assert!(presence.is_deafened == status.is_deafened);
         assert!(presence.is_screen_sharing);
         assert!(presence.is_low_bandwidth_mode == status.is_low_bandwidth_mode);
-        assert!(presence.is_on_the_go_mode == status.is_on_the_go_mode);
         assert!(presence.is_mobile);
     }
 
