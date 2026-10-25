@@ -1170,7 +1170,7 @@
                     }
 
                     const rowHtml = `
-                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" ondragstart="handleUserDragStart(event, '${uid}')" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchend="handleUserTouchEnd(event)" ontouchmove="handleUserTouchCancel()">
+                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" onmouseenter="this.closest('.room-item').draggable=false" onmouseleave="this.closest('.room-item').draggable=true" ondragstart="handleUserDragStart(event, '${uid}')" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchend="handleUserTouchEnd(event)" ontouchmove="handleUserTouchCancel()">
                             <div class="user-avatar-wrap">
                                 <div class="mini-avatar">
                                     ${avatar ? (isGif && staticFrame ? `<img src="${escapeHtml(staticFrame)}" data-gif-src="${escapeHtml(avatar)}" data-static-src="${escapeHtml(staticFrame)}">` : `<img src="${escapeHtml(avatar)}">`) : `<div class="mini-avatar-placeholder">${escapeHtml(u.nickname.charAt(0).toUpperCase())}</div>`}
@@ -1257,6 +1257,10 @@
         function handleUserDragStart(e, uid) {
             draggedUserId = uid;
             e.stopPropagation();
+            // The room item must never compete as a drag source for a user
+            // drag (it is draggable itself for channel reordering).
+            const item = e.target.closest('.room-item');
+            if (item) item.draggable = false;
             if (e.dataTransfer) {
                 try { e.dataTransfer.setData('text/plain', uid); } catch (err) {}
                 e.dataTransfer.effectAllowed = 'move';
@@ -1266,6 +1270,7 @@
         function handleUserDragEnd() {
             draggedUserId = null;
             document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
+            document.querySelectorAll('.room-item').forEach(el => { el.draggable = true; });
         }
 
         function handleStageDragOver(e) {
