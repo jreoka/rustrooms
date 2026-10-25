@@ -74,7 +74,7 @@ pub(crate) fn is_valid_distributed_message(msg: &DistributedMessage) -> bool {
 
     match msg.msg_type.as_str() {
         "user-joined" | "user-update" => msg.status.is_some(),
-        "user-left" | "user-kicked" | "user-banned" | "delete-channel" => true,
+        "user-left" | "user-kicked" | "user-banned" | "delete-channel" | "user-resumed" => true,
         "channel-upsert" => msg
             .data
             .as_ref()
@@ -142,6 +142,13 @@ async fn update_remote_ownership(
         // a node other than the one hosting the target.
         "user-kicked" | "user-banned" => {
             owners.remove(&key);
+            true
+        }
+        // A resume moves the user's home node: the resuming node
+        // becomes the owner so its subsequent presence traffic is
+        // accepted everywhere.
+        "user-resumed" => {
+            owners.insert(key, source_node_id.to_string());
             true
         }
         _ => true,
@@ -875,6 +882,13 @@ async fn apply_distributed_message(
                 }
             }
         }
+        "user-resumed" => {
+            // If this node holds a phantom seat for the user, drop it
+            // silently: they live on the resuming node now, and a
+            // user-left from here would tear down their healthy call.
+            crate::rooms::finalize_held_seat(state, &msg.room_id, &msg.user_id, None, false)
+                .await;
+        }
         "knock-update" => {
             if let Some(ref data) = msg.data {
                 let admin_ids = {
@@ -1256,6 +1270,9 @@ mod tests {
             admin_rooms: Arc::new(Mutex::new(HashMap::new())),
 admin_redis: None,
 redis_prefix: "rustrooms".to_string(),
+resume_records: Arc::new(Mutex::new(HashMap::new())),
+away_seats: Arc::new(Mutex::new(HashMap::new())),
+departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             server_secret: Arc::new(vec![7u8; 32]),
         }
     }

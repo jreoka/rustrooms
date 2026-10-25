@@ -289,6 +289,9 @@ mod tests {
             admin_rooms: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
 admin_redis: None,
 redis_prefix: "rustrooms".to_string(),
+resume_records: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+away_seats: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             server_secret: Arc::new(vec![7u8; 32]),
         }
     }

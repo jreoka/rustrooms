@@ -113,13 +113,18 @@ async fn main() {
     // Restored rooms start empty, so arm the normal expiry cleanup:
     // if nobody rejoins within the grace period the entry is deleted
     // exactly as if the server had never stopped.
-    let (server_secret, admin_rooms, restored_room_ids) = if distributed_mode {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (server_secret, admin_rooms, restored_room_ids, resume_records) = if distributed_mode {
         // Redis is the shared source of truth; state materializes
         // per room at join time, so there is nothing to restore.
         (
             Arc::new(env_secret.unwrap_or_else(gen_secret)),
             Arc::new(Mutex::new(HashMap::new())),
             Vec::new(),
+            Arc::new(Mutex::new(HashMap::new())),
         )
     } else {
         match admin::load_persisted() {
@@ -130,16 +135,34 @@ async fn main() {
                     .map(|(id, room)| (id, RoomAdmin::from(room)))
                     .collect();
                 let ids: Vec<String> = map.keys().cloned().collect();
+                let resume_map: HashMap<(String, String), state::ResumeRecord> = p
+                    .resume
+                    .into_iter()
+                    .flat_map(|(room, users)| {
+                        users.into_iter().filter_map(move |(user, rec)| {
+                            (rec.expires_at > now_secs)
+                                .then(|| ((room.clone(), user), rec))
+                        })
+                    })
+                    .collect();
+                if !resume_map.is_empty() {
+                    println!(
+                        "RESUME: Restored {} resume token(s) from disk",
+                        resume_map.len()
+                    );
+                }
                 (
                     Arc::new(env_secret.unwrap_or(p.secret)),
                     Arc::new(Mutex::new(map)),
                     ids,
+                    Arc::new(Mutex::new(resume_map)),
                 )
             }
             _ => (
                 Arc::new(env_secret.unwrap_or_else(gen_secret)),
                 Arc::new(Mutex::new(HashMap::new())),
                 Vec::new(),
+                Arc::new(Mutex::new(HashMap::new())),
             ),
         }
     };
@@ -159,6 +182,9 @@ async fn main() {
         admin_rooms,
         admin_redis,
         redis_prefix: redis_prefix.clone(),
+        resume_records,
+        away_seats: Arc::new(Mutex::new(HashMap::new())),
+        departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         server_secret,
     };
 

@@ -39,6 +39,269 @@ fn room_creation_needs_password(
     provided != Some(required)
 }
 
+
+// Marks a dropped participant's seat as held and returns the
+// departure generation, or None if this connection is not the live
+// seat (superseded, kicked, or never joined).
+async fn hold_seat(
+    state: &AppState,
+    room_id: &str,
+    user_id: &str,
+    tx: &UserTx,
+) -> Option<u64> {
+    let channel_id = {
+        let rooms_lock = state.rooms.lock().await;
+        let room = rooms_lock.get(room_id)?;
+        let mut found = None;
+        for (cid, channel) in room.iter() {
+            if let Some((stored_tx, _)) = channel.get(user_id)
+                && stored_tx.same_channel(tx)
+            {
+                found = Some(cid.clone());
+                break;
+            }
+        }
+        found?
+    };
+    let generation = state
+        .departure_gen
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    state.away_seats.lock().await.insert(
+        (room_id.to_string(), user_id.to_string()),
+        AwayMark {
+            channel_id,
+            generation,
+            tx: tx.clone(),
+        },
+    );
+    Some(generation)
+}
+
+// Removes a held seat for good. With announce=true this is the
+// delayed real departure (user-left locally and cluster-wide, plus
+// empty-room cleanup). With announce=false another node has taken
+// the user over (user-resumed), so the seat vanishes silently.
+// No-ops when the mark is gone or the generation moved on (the
+// user resumed in the meantime).
+pub(crate) async fn finalize_held_seat(
+    state: &AppState,
+    room_id: &str,
+    user_id: &str,
+    generation: Option<u64>,
+    announce: bool,
+) {
+    let key = (room_id.to_string(), user_id.to_string());
+    let mark = {
+        let mut lock = state.away_seats.lock().await;
+        match lock.get(&key) {
+            Some(m) if generation.map(|g| g == m.generation).unwrap_or(true) => {
+                lock.remove(&key)
+            }
+            _ => None,
+        }
+    };
+    let Some(mark) = mark else { return };
+
+    let mut removed_from: Option<String> = None;
+    let mut room_empty = false;
+    {
+        let mut rooms_lock = state.rooms.lock().await;
+        if let Some(room) = rooms_lock.get_mut(room_id) {
+            let mut order: Vec<String> = vec![mark.channel_id.clone()];
+            for cid in room.keys() {
+                if *cid != mark.channel_id {
+                    order.push(cid.clone());
+                }
+            }
+            for cid in order {
+                if let Some(channel) = room.get_mut(&cid)
+                    && let Some((stored_tx, _)) = channel.get(user_id)
+                    && stored_tx.same_channel(&mark.tx)
+                {
+                    channel.remove(user_id);
+                    removed_from = Some(cid);
+                    break;
+                }
+            }
+            if let Some(cid) = &removed_from {
+                room_empty = room.values().all(|c| c.is_empty());
+                if announce && let Some(channel) = room.get(cid) && !channel.is_empty() {
+                    let notify_msg = serde_json::to_string(&SignalMessage {
+                        msg_type: "user-left".into(),
+                        user_id: Some(user_id.to_string()),
+                        target: None,
+                        data: None,
+                    })
+                    .unwrap();
+                    for (_, (tx, _)) in channel.iter() {
+                        let _ = tx.try_send(Ok(Message::Text(notify_msg.clone().into())));
+                    }
+                }
+            }
+        }
+    }
+    let Some(cid) = removed_from else { return };
+    if announce {
+        distributed_broadcast(
+            state,
+            &DistributedMessage {
+                msg_type: "user-left".into(),
+                room_id: room_id.to_string(),
+                channel_id: cid,
+                user_id: user_id.to_string(),
+                msg_id: Uuid::new_v4().to_string(),
+                status: None,
+                data: None,
+                signal_msg: None,
+            },
+        )
+        .await;
+    }
+    if room_empty {
+        on_room_maybe_empty(state, room_id).await;
+    }
+}
+
+// Schedules the delayed deletion of a room that just became empty
+// (shared by the disconnect path and held-seat finalization).
+async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
+        let next_generation = {
+            let mut cleanup_lock = state.room_cleanup_generations.lock().await;
+            let next = cleanup_lock.get(room_id).copied().unwrap_or(0) + 1;
+            cleanup_lock.insert(room_id.to_string(), next);
+            next
+        };
+        println!(
+            "CLEANUP: Room '{}' became empty; scheduling deletion in {}s (generation {})",
+            room_id, ROOM_EMPTY_GRACE_SECS, next_generation
+        );
+
+        let rooms_clone = state.rooms.clone();
+        let cleanup_clone = state.room_cleanup_generations.clone();
+        let remote_users_clone = state.remote_users.clone();
+        let times_clone = state.channel_creation_times.clone();
+        let admin_clone = state.admin_rooms.clone();
+        let state_clone = state.clone();
+        let room_id_clone = room_id.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS)).await;
+
+            let generation_still_current = cleanup_clone
+                .lock()
+                .await
+                .get(&room_id_clone)
+                .copied()
+                .map(|g| g == next_generation)
+                .unwrap_or(false);
+            if !generation_still_current {
+                return;
+            }
+
+            let removed_room = {
+                let has_remote = remote_users_clone
+                    .lock()
+                    .await
+                    .get(&room_id_clone)
+                    .map(|r| r.values().any(|c| !c.is_empty()))
+                    .unwrap_or(false);
+                if has_remote {
+                    false
+                } else {
+                    let mut rooms_lock = rooms_clone.lock().await;
+                    let should_remove_room = rooms_lock
+                        .get(&room_id_clone)
+                        .map(|room| room.values().all(|c| c.is_empty()))
+                        .unwrap_or(false);
+                    if should_remove_room {
+                        rooms_lock.remove(&room_id_clone);
+                        true
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            if removed_room {
+                times_clone.lock().await.remove(&room_id_clone);
+                admin_clone.lock().await.remove(&room_id_clone);
+                crate::admin::delete_admin_redis(&state_clone, &room_id_clone).await;
+                crate::admin::persist_state(&state_clone).await;
+                let mut cleanup_lock = cleanup_clone.lock().await;
+                if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
+                    cleanup_lock.remove(&room_id_clone);
+                }
+                println!(
+                    "CLEANUP: Removed empty room '{}' after {}s empty",
+                    room_id_clone, ROOM_EMPTY_GRACE_SECS
+                );
+            } else {
+                // Room still has remote users or became non-empty; reschedule cleanup.
+                let mut cleanup_lock = cleanup_clone.lock().await;
+                if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
+                    let next_gen = next_generation + 1;
+                    cleanup_lock.insert(room_id_clone.clone(), next_gen);
+                    let rooms_retry = rooms_clone.clone();
+                    let cleanup_retry = cleanup_clone.clone();
+                    let remote_retry = remote_users_clone.clone();
+                    let times_retry = times_clone.clone();
+                    let admin_retry = admin_clone.clone();
+                    let state_retry = state_clone.clone();
+                    let rid_retry = room_id_clone.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS))
+                            .await;
+                        let gen_current =
+                            cleanup_retry.lock().await.get(&rid_retry).copied() == Some(next_gen);
+                        if !gen_current {
+                            return;
+                        }
+                        let has_remote = remote_retry
+                            .lock()
+                            .await
+                            .get(&rid_retry)
+                            .map(|r| r.values().any(|c| !c.is_empty()))
+                            .unwrap_or(false);
+                        if has_remote {
+                            // Still has remote users, clear generation so future activity can re-trigger.
+                            let mut cl = cleanup_retry.lock().await;
+                            if cl.get(&rid_retry).copied() == Some(next_gen) {
+                                cl.remove(&rid_retry);
+                            }
+                            return;
+                        }
+                        let removed = {
+                            let mut rl = rooms_retry.lock().await;
+                            let should = rl
+                                .get(&rid_retry)
+                                .map(|rm| rm.values().all(|c| c.is_empty()))
+                                .unwrap_or(false);
+                            if should {
+                                rl.remove(&rid_retry);
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        if removed {
+                            times_retry.lock().await.remove(&rid_retry);
+                            admin_retry.lock().await.remove(&rid_retry);
+                            crate::admin::delete_admin_redis(&state_retry, &rid_retry).await;
+                            crate::admin::persist_state(&state_retry).await;
+                            let mut cl = cleanup_retry.lock().await;
+                            if cl.get(&rid_retry).copied() == Some(next_gen) {
+                                cl.remove(&rid_retry);
+                            }
+                            println!(
+                                "CLEANUP: Removed empty room '{}' after rescheduled check",
+                                rid_retry
+                            );
+                        }
+                    });
+                }
+            }
+        });
+}
+
 pub(crate) async fn handle_socket(
     socket: WebSocket,
     room_id: String,
@@ -54,6 +317,7 @@ pub(crate) async fn handle_socket(
     let mut user_id = String::new();
     let mut is_joined = false;
     let mut is_pending_knock = false;
+    let mut intentional_leave = false;
     let mut message_window_started = std::time::Instant::now();
     let mut messages_in_window = 0u32;
     let mut bytes_in_window = 0usize;
@@ -188,6 +452,11 @@ pub(crate) async fn handle_socket(
                     }
 
                     if is_pending_knock && parsed.msg_type == "knock-cancel" {
+                        break;
+                    }
+
+                    if parsed.msg_type == "leave" && is_joined {
+                        intentional_leave = true;
                         break;
                     }
 
@@ -332,6 +601,13 @@ pub(crate) async fn handle_socket(
                                 .and_then(|v| v.as_str())
                                 .filter(|k| k.len() <= 256)
                                 .map(|k| k.to_string());
+                            let resume_token = parsed
+                                .data
+                                .as_ref()
+                                .and_then(|d| d.get("resumeToken"))
+                                .and_then(|v| v.as_str())
+                                .filter(|k| k.len() <= 256)
+                                .map(|k| k.to_string());
                             let want_lobby = parsed
                                 .data
                                 .as_ref()
@@ -371,6 +647,8 @@ pub(crate) async fn handle_socket(
                             };
                             let mut issued_admin_key: Option<String> = None;
                             let mut park_for_knock = false;
+                            let mut resume_ok = false;
+                            let mut warm_resume = false;
                             let mut admin_state_changed = false;
                             {
                                 let room_needs_password = {
@@ -460,7 +738,7 @@ pub(crate) async fn handle_socket(
                                 // In a stage room only admins may create
                                 // channels. Checked before the channel entry
                                 // is materialized by the insert below.
-                                if !channel_preexists {
+                                if !channel_preexists && channel_id != "General" {
                                     crate::admin::load_admin_redis(&state, &room_id).await;
                                     let blocked = {
                                         let lock = state.admin_rooms.lock().await;
@@ -507,10 +785,63 @@ pub(crate) async fn handle_socket(
                                 let channel =
                                     room.entry(channel_id.clone()).or_insert_with(HashMap::new);
 
-                                user_id = unique_user_id(user_id, |candidate| {
-                                    channel.contains_key(candidate)
-                                        || occupied_remote_ids.contains(candidate)
-                                });
+                                // Resume check: a live token for this
+                                // room+channel means this connection is
+                                // the same participant returning, not a
+                                // new identity to be suffixed.
+                                let seat_held = {
+                                    let lock = state.away_seats.lock().await;
+                                    lock.get(&(room_id.clone(), user_id.clone()))
+                                        .is_some_and(|m| m.channel_id == channel_id)
+                                };
+                                resume_ok = crate::admin::validate_resume_token(
+                                    &state,
+                                    &room_id,
+                                    &user_id,
+                                    &channel_id,
+                                    resume_token.as_deref(),
+                                )
+                                .await;
+                                // The creator key is also proof of
+                                // identity: its holder may reclaim a
+                                // held seat (their browser may have lost
+                                // the resume token, e.g. a fresh tab).
+                                let key_ok_pre = if seat_held || occupied_remote_ids.contains(&user_id) {
+                                    crate::admin::load_admin_redis(&state, &room_id).await;
+                                    let lock = state.admin_rooms.lock().await;
+                                    lock.get(&room_id)
+                                        .and_then(|a| {
+                                            admin_key
+                                                .as_deref()
+                                                .zip(a.key_hash.as_deref())
+                                                .map(|(k, h)| {
+                                                    crate::admin::verify_key(
+                                                        &state.server_secret,
+                                                        &room_id,
+                                                        k,
+                                                        h,
+                                                    )
+                                                })
+                                        })
+                                        .unwrap_or(false)
+                                } else {
+                                    false
+                                };
+                                let takeover = (resume_ok || key_ok_pre)
+                                    && (seat_held || occupied_remote_ids.contains(&user_id));
+                                warm_resume = takeover;
+                                if takeover {
+                                    state
+                                        .away_seats
+                                        .lock()
+                                        .await
+                                        .remove(&(room_id.clone(), user_id.clone()));
+                                } else {
+                                    user_id = unique_user_id(user_id, |candidate| {
+                                        channel.contains_key(candidate)
+                                            || occupied_remote_ids.contains(candidate)
+                                    });
+                                }
 
                                 // ---- Admin gate: creator creation, bans, lobby ----
                                 crate::admin::load_admin_redis(&state, &room_id).await;
@@ -565,6 +896,7 @@ pub(crate) async fn handle_socket(
                                         admin_state_changed = true;
                                     }
                                     let bypass_lobby = key_ok
+                                        || resume_ok
                                         || admin_state.is_admin(&user_id)
                                         || already_member
                                         || admin_state.approved.remove(&user_id);
@@ -670,12 +1002,42 @@ pub(crate) async fn handle_socket(
                             }
                             is_joined = true;
 
+                            if resume_ok || warm_resume {
+                                // Let any node holding this user's held
+                                // seat drop it silently; also moves the
+                                // presence ownership to this node.
+                                distributed_broadcast(
+                                    &state,
+                                    &DistributedMessage {
+                                        msg_type: "user-resumed".into(),
+                                        room_id: room_id.clone(),
+                                        channel_id: channel_id.clone(),
+                                        user_id: user_id.clone(),
+                                        msg_id: Uuid::new_v4().to_string(),
+                                        status: None,
+                                        data: None,
+                                        signal_msg: None,
+                                    },
+                                )
+                                .await;
+                            }
+
                             // Send the server-assigned userId back to the client
+                            let new_resume_token = crate::admin::issue_resume_token(
+                                &state,
+                                &room_id,
+                                &user_id,
+                                &channel_id,
+                            )
+                            .await;
                             let joined_msg = serde_json::to_string(&SignalMessage {
                                 msg_type: "joined".into(),
                                 user_id: Some(user_id.clone()),
                                 target: None,
-                                data: None,
+                                data: Some(serde_json::json!({
+                                    "resumed": resume_ok || warm_resume,
+                                    "resumeToken": new_resume_token
+                                })),
                             })
                             .unwrap();
                             let _ = tx.try_send(Ok(Message::Text(joined_msg.into())));
@@ -834,7 +1196,7 @@ pub(crate) async fn handle_socket(
                                     .and_then(|channel| channel.get(&user_id))
                                     .is_some_and(|(stored_tx, _)| stored_tx.same_channel(&tx))
                             };
-                            if still_in_channel {
+                            if still_in_channel && !warm_resume {
                                 {
                                     let rooms_lock = rooms.lock().await;
                                     if let Some(room) = rooms_lock.get(&room_id)
@@ -1272,6 +1634,15 @@ pub(crate) async fn handle_socket(
                                     }
 
                                     drop(rooms_lock);
+                                    state
+                                        .away_seats
+                                        .lock()
+                                        .await
+                                        .remove(&(room_id.clone(), kick_uid.clone()));
+                                    crate::admin::delete_resume_token(
+                                        &state, &room_id, &kick_uid,
+                                    )
+                                    .await;
 
                                     // This node never processes its own
                                     // broadcast, so also drop any duplicate
@@ -1632,6 +2003,15 @@ pub(crate) async fn handle_socket(
                                         let mut lock = state.admin_rooms.lock().await;
                                         if let Some(a) = lock.get_mut(&room_id) {
                                             a.banned.insert(target.clone());
+                                            state
+                                                .away_seats
+                                                .lock()
+                                                .await
+                                                .remove(&(room_id.clone(), target.clone()));
+                                            crate::admin::delete_resume_token(
+                                                &state, &room_id, &target,
+                                            )
+                                            .await;
                                             a.admins.remove(&target);
                                             a.speakers.remove(&target);
                                             a.forced.remove(&target);
@@ -2160,6 +2540,15 @@ pub(crate) async fn handle_socket(
 
     let mut actually_removed = false;
     let mut schedule_room_cleanup = false;
+    // Unexpected drop of a joined connection: hold the seat instead
+    // of announcing a departure. The participant's media is P2P and
+    // keeps flowing; if they reconnect within the grace window the
+    // call never notices. Explicit leaves skip the hold.
+    let mut held_seat: Option<u64> = None;
+    if is_joined && !intentional_leave {
+        held_seat = hold_seat(&state, &room_id, &user_id, &tx).await;
+    }
+    if held_seat.is_none() {
     {
         let mut rooms_lock = rooms.lock().await;
 
@@ -2220,6 +2609,7 @@ pub(crate) async fn handle_socket(
             }
         }
     }
+    }
 
     if schedule_room_cleanup {
         let has_remote = remote_users
@@ -2251,140 +2641,19 @@ pub(crate) async fn handle_socket(
     }
 
     if schedule_room_cleanup {
-        let next_generation = {
-            let mut cleanup_lock = room_cleanup_generations.lock().await;
-            let next = cleanup_lock.get(&room_id).copied().unwrap_or(0) + 1;
-            cleanup_lock.insert(room_id.clone(), next);
-            next
-        };
-        println!(
-            "CLEANUP: Room '{}' became empty; scheduling deletion in {}s (generation {})",
-            room_id, ROOM_EMPTY_GRACE_SECS, next_generation
-        );
+        on_room_maybe_empty(&state, &room_id).await;
+    }
 
-        let rooms_clone = rooms.clone();
-        let cleanup_clone = room_cleanup_generations.clone();
-        let remote_users_clone = remote_users.clone();
-        let times_clone = state.channel_creation_times.clone();
-        let admin_clone = state.admin_rooms.clone();
-        let state_clone = state.clone();
-        let room_id_clone = room_id.clone();
+    if let Some(generation) = held_seat {
+        let state2 = state.clone();
+        let room2 = room_id.clone();
+        let user2 = user_id.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS)).await;
-
-            let generation_still_current = cleanup_clone
-                .lock()
-                .await
-                .get(&room_id_clone)
-                .copied()
-                .map(|g| g == next_generation)
-                .unwrap_or(false);
-            if !generation_still_current {
-                return;
-            }
-
-            let removed_room = {
-                let has_remote = remote_users_clone
-                    .lock()
-                    .await
-                    .get(&room_id_clone)
-                    .map(|r| r.values().any(|c| !c.is_empty()))
-                    .unwrap_or(false);
-                if has_remote {
-                    false
-                } else {
-                    let mut rooms_lock = rooms_clone.lock().await;
-                    let should_remove_room = rooms_lock
-                        .get(&room_id_clone)
-                        .map(|room| room.values().all(|c| c.is_empty()))
-                        .unwrap_or(false);
-                    if should_remove_room {
-                        rooms_lock.remove(&room_id_clone);
-                        true
-                    } else {
-                        false
-                    }
-                }
-            };
-
-            if removed_room {
-                times_clone.lock().await.remove(&room_id_clone);
-                admin_clone.lock().await.remove(&room_id_clone);
-                crate::admin::delete_admin_redis(&state_clone, &room_id_clone).await;
-                crate::admin::persist_state(&state_clone).await;
-                let mut cleanup_lock = cleanup_clone.lock().await;
-                if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
-                    cleanup_lock.remove(&room_id_clone);
-                }
-                println!(
-                    "CLEANUP: Removed empty room '{}' after {}s empty",
-                    room_id_clone, ROOM_EMPTY_GRACE_SECS
-                );
-            } else {
-                // Room still has remote users or became non-empty; reschedule cleanup.
-                let mut cleanup_lock = cleanup_clone.lock().await;
-                if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
-                    let next_gen = next_generation + 1;
-                    cleanup_lock.insert(room_id_clone.clone(), next_gen);
-                    let rooms_retry = rooms_clone.clone();
-                    let cleanup_retry = cleanup_clone.clone();
-                    let remote_retry = remote_users_clone.clone();
-                    let times_retry = times_clone.clone();
-                    let admin_retry = admin_clone.clone();
-                    let state_retry = state_clone.clone();
-                    let rid_retry = room_id_clone.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS))
-                            .await;
-                        let gen_current =
-                            cleanup_retry.lock().await.get(&rid_retry).copied() == Some(next_gen);
-                        if !gen_current {
-                            return;
-                        }
-                        let has_remote = remote_retry
-                            .lock()
-                            .await
-                            .get(&rid_retry)
-                            .map(|r| r.values().any(|c| !c.is_empty()))
-                            .unwrap_or(false);
-                        if has_remote {
-                            // Still has remote users, clear generation so future activity can re-trigger.
-                            let mut cl = cleanup_retry.lock().await;
-                            if cl.get(&rid_retry).copied() == Some(next_gen) {
-                                cl.remove(&rid_retry);
-                            }
-                            return;
-                        }
-                        let removed = {
-                            let mut rl = rooms_retry.lock().await;
-                            let should = rl
-                                .get(&rid_retry)
-                                .map(|rm| rm.values().all(|c| c.is_empty()))
-                                .unwrap_or(false);
-                            if should {
-                                rl.remove(&rid_retry);
-                                true
-                            } else {
-                                false
-                            }
-                        };
-                        if removed {
-                            times_retry.lock().await.remove(&rid_retry);
-                            admin_retry.lock().await.remove(&rid_retry);
-                            crate::admin::delete_admin_redis(&state_retry, &rid_retry).await;
-                            crate::admin::persist_state(&state_retry).await;
-                            let mut cl = cleanup_retry.lock().await;
-                            if cl.get(&rid_retry).copied() == Some(next_gen) {
-                                cl.remove(&rid_retry);
-                            }
-                            println!(
-                                "CLEANUP: Removed empty room '{}' after rescheduled check",
-                                rid_retry
-                            );
-                        }
-                    });
-                }
-            }
+            tokio::time::sleep(std::time::Duration::from_secs(
+                crate::admin::resume_grace_secs(),
+            ))
+            .await;
+            finalize_held_seat(&state2, &room2, &user2, Some(generation), true).await;
         });
     }
     broadcast_channel_list(

@@ -84,7 +84,7 @@ mod tests {
 // ---- Room admin messaging helpers (used by rooms.rs and distributed.rs) ----
 
 use crate::distributed::distributed_broadcast;
-use crate::state::{AppState, DistributedMessage, SignalMessage, RoomAdmin};
+use crate::state::{AppState, DistributedMessage, ResumeRecord, RoomAdmin, SignalMessage};
 use axum::extract::ws::Message;
 
 pub(crate) fn signal_text(msg_type: &str, user_id: Option<String>, data: Option<serde_json::Value>) -> String {
@@ -241,9 +241,29 @@ pub(crate) async fn persist_state(state: &AppState) {
             .map(|(id, a)| (id.clone(), a.to_persisted()))
             .collect()
     };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let resume: std::collections::HashMap<String, std::collections::HashMap<String, ResumeRecord>> = {
+        let lock = state.resume_records.lock().await;
+        let mut out: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, ResumeRecord>,
+        > = std::collections::HashMap::new();
+        for ((room, user), rec) in lock.iter() {
+            if rec.expires_at > now {
+                out.entry(room.clone())
+                    .or_default()
+                    .insert(user.clone(), rec.clone());
+            }
+        }
+        out
+    };
     let data = PersistedState {
         secret: (*state.server_secret).clone(),
         rooms,
+        resume,
     };
     let Ok(json) = serde_json::to_string(&data) else {
         return;
@@ -386,4 +406,134 @@ pub(crate) async fn delete_admin_redis(state: &AppState, room_id: &str) {
     };
     let mut conn = template;
     let _: redis::RedisResult<()> = conn.del(admin_redis_key(state, room_id)).await;
+}
+
+// ---- Resume tokens (seamless reconnects / restarts) ----
+//
+// Issued at every successful join and rotated each time. Presenting
+// a live token for the same room+channel proves this connection is
+// the same participant returning: the join bypasses the lobby and,
+// if the seat is still held, announces nothing at all. Only the
+// token's SHA-256 is stored (here, in Redis, and in the state
+// file), so a leaked store does not hand out live sessions.
+
+pub(crate) const RESUME_TOKEN_TTL_SECS: u64 = 300;
+
+pub(crate) fn resume_grace_secs() -> u64 {
+    std::env::var("RUSTROOMS_RESUME_GRACE_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| (1..=600).contains(v))
+        .unwrap_or(45)
+}
+
+pub(crate) fn current_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn resume_token_hash(token: &str) -> String {
+    use sha2::Digest;
+    hex(&sha2::Sha256::digest(token.as_bytes()))
+}
+
+fn resume_redis_key(state: &AppState, room_id: &str, user_id: &str) -> String {
+    format!("{}:resume:{}:{}", state.redis_prefix, room_id, user_id)
+}
+
+pub(crate) async fn issue_resume_token(
+    state: &AppState,
+    room_id: &str,
+    user_id: &str,
+    channel_id: &str,
+) -> String {
+    let token = issue_key();
+    let record = ResumeRecord {
+        token_hash: resume_token_hash(&token),
+        channel_id: channel_id.to_string(),
+        expires_at: current_unix_secs() + RESUME_TOKEN_TTL_SECS,
+    };
+    state
+        .resume_records
+        .lock()
+        .await
+        .insert((room_id.to_string(), user_id.to_string()), record.clone());
+    if let Some(template) = state.admin_redis.clone() {
+        use redis::AsyncCommands;
+        let mut conn = template;
+        if let Ok(json) = serde_json::to_string(&record) {
+            let _: redis::RedisResult<()> = conn
+                .set_ex(
+                    resume_redis_key(state, room_id, user_id),
+                    json,
+                    RESUME_TOKEN_TTL_SECS,
+                )
+                .await;
+        }
+    } else {
+        persist_state(state).await;
+    }
+    token
+}
+
+pub(crate) async fn validate_resume_token(
+    state: &AppState,
+    room_id: &str,
+    user_id: &str,
+    channel_id: &str,
+    token: Option<&str>,
+) -> bool {
+    let Some(token) = token.filter(|t| !t.is_empty()) else {
+        return false;
+    };
+    let hash = resume_token_hash(token);
+    let now = current_unix_secs();
+    let matches = |rec: &ResumeRecord| {
+        rec.token_hash == hash && rec.channel_id == channel_id && rec.expires_at > now
+    };
+    {
+        let lock = state.resume_records.lock().await;
+        if let Some(rec) = lock.get(&(room_id.to_string(), user_id.to_string())) {
+            return matches(rec);
+        }
+    }
+    if let Some(template) = state.admin_redis.clone() {
+        use redis::AsyncCommands;
+        let mut conn = template;
+        let raw: Option<String> = conn
+            .get(resume_redis_key(state, room_id, user_id))
+            .await
+            .ok()
+            .flatten();
+        if let Some(raw) = raw
+            && let Ok(rec) = serde_json::from_str::<ResumeRecord>(&raw)
+        {
+            let ok = matches(&rec);
+            if ok {
+                state
+                    .resume_records
+                    .lock()
+                    .await
+                    .insert((room_id.to_string(), user_id.to_string()), rec);
+            }
+            return ok;
+        }
+    }
+    false
+}
+
+pub(crate) async fn delete_resume_token(state: &AppState, room_id: &str, user_id: &str) {
+    state
+        .resume_records
+        .lock()
+        .await
+        .remove(&(room_id.to_string(), user_id.to_string()));
+    if let Some(template) = state.admin_redis.clone() {
+        use redis::AsyncCommands;
+        let mut conn = template;
+        let _: redis::RedisResult<()> =
+            conn.del(resume_redis_key(state, room_id, user_id)).await;
+    }
 }

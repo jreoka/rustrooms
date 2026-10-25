@@ -65,6 +65,7 @@
                                     nickname: userNickname,
                                     profileRev: profileRev,
                                     adminKey: getStoredAdminKey(),
+                                    resumeToken: getStoredResumeToken(),
                                     lobby: !!(getCreateOpts() && getCreateOpts().lobby),
                                     roomType: (getCreateOpts() && getCreateOpts().type) || 'regular',
                                     avatar: userAvatar,
@@ -132,6 +133,9 @@
                                     if (msg.userId) {
                                         persistentUserId = msg.userId;
                                         localStorage.setItem('rustrooms_user_id', persistentUserId);
+                                    }
+                                    if (msg.data && msg.data.resumeToken) {
+                                        storeResumeToken(msg.data.resumeToken);
                                     }
                                     hideKnockWaiting();
                                     break;
@@ -287,7 +291,7 @@
                                     break;
                                 case 'user-joined':
                                     try {
-                                        playNotificationSound('join');
+                                        if (!peers[msg.userId]) playNotificationSound('join');
                                         const joinedScreenAudio = getScreenAudioFlag(msg.data);
                                         updatePeerTrackHints(msg.userId, msg.data);
                                         if (msg.data) {
@@ -1875,6 +1879,11 @@
         function leaveRoom() {
 
             hasLeftRoom = true;
+            try {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'leave' }));
+                }
+            } catch (e) {}
 
             // Reset the tab title when the call ends.
             document.title = 'RustRooms';

@@ -3058,6 +3058,16 @@
         let createRoomTypeChoice = 'regular';
         let knockDeniedFlag = false;
 
+        function getStoredResumeToken() {
+            try { return sessionStorage.getItem('rustrooms_resume_' + roomId) || null; } catch (e) { return null; }
+        }
+
+        function storeResumeToken(token) {
+            try {
+                if (token) sessionStorage.setItem('rustrooms_resume_' + roomId, token);
+            } catch (e) {}
+        }
+
         function getStoredAdminKey() {
             try { return localStorage.getItem('rustrooms_admin_' + roomId) || null; } catch (e) { return null; }
         }

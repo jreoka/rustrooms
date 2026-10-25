@@ -244,7 +244,34 @@ pub(crate) struct PersistedRoomAdmin {
 pub(crate) struct PersistedState {
     pub secret: Vec<u8>,
     pub rooms: HashMap<String, PersistedRoomAdmin>,
+    // Resume tokens (room -> user -> record), so a quick server
+    // restart doesn't force everyone through a fresh join. Only the
+    // token hash is ever stored.
+    #[serde(default)]
+    pub resume: HashMap<String, HashMap<String, ResumeRecord>>,
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct ResumeRecord {
+    pub token_hash: String,
+    pub channel_id: String,
+    pub expires_at: u64,
+}
+
+// Live resume tokens by (room_id, user_id).
+pub(crate) type ResumeMap = Arc<Mutex<HashMap<(String, String), ResumeRecord>>>;
+
+// A seat whose connection dropped unexpectedly. The user stays in
+// the room map (peers see and hear no change; their media is P2P)
+// until they resume or the mark's departure generation expires.
+#[derive(Clone)]
+pub(crate) struct AwayMark {
+    pub channel_id: String,
+    pub generation: u64,
+    pub tx: UserTx,
+}
+
+pub(crate) type AwayMap = Arc<Mutex<HashMap<(String, String), AwayMark>>>;
 
 impl RoomAdmin {
     pub(crate) fn to_persisted(&self) -> PersistedRoomAdmin {
@@ -323,6 +350,9 @@ pub(crate) struct AppState {
     // node, where the state file is the persistence layer instead.
     pub(crate) admin_redis: Option<redis::aio::MultiplexedConnection>,
     pub(crate) redis_prefix: String,
+    pub(crate) resume_records: ResumeMap,
+    pub(crate) away_seats: AwayMap,
+    pub(crate) departure_gen: Arc<std::sync::atomic::AtomicU64>,
     // Random per boot; signs creator keys. Rooms are in-memory only,
     // so a restart invalidating every key matches room lifetime.
     pub(crate) server_secret: Arc<Vec<u8>>,
