@@ -155,7 +155,20 @@
                             }
                         }
                     }
-                    return originalGetUserMedia(constraints);
+                    return originalGetUserMedia(constraints).then((stream) => {
+                        // A successful capture unlocks device labels:
+                        // enumerateDevices returns blank labels (and ids)
+                        // until the page holds a capture or a remembered
+                        // permission, so lists populated before this point
+                        // — the setup screen in incognito or a fresh
+                        // profile — show only kind fallbacks. Refresh both
+                        // lists now that real names are available.
+                        try {
+                            populateDeviceList();
+                            populateSettingsDeviceList();
+                        } catch (e) {}
+                        return stream;
+                    });
                 };
             }
 
