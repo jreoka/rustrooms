@@ -306,10 +306,16 @@
                 }
             }
 
-            if (peerIds.length > 0 && !hasConnectedPeers && !hasConnectingPeers) {
-                updateStatus('disconnected', 'Connection Lost');
-            } else if (hasConnectedPeers) {
+            // The pill reports THIS client's connection (its latency figure
+            // is the WebSocket RTT). A peer whose browser died says nothing
+            // about our own connection — while the socket is up we are
+            // Connected, and the peer's departure is handled by the roster
+            // and seat expiry, not by crying "Connection Lost" here.
+            const wsUp = typeof ws !== 'undefined' && !!ws && ws.readyState === WebSocket.OPEN;
+            if (hasConnectedPeers || (peerIds.length > 0 && wsUp)) {
                 updateStatus('connected', 'Connected');
+            } else if (peerIds.length > 0 && !hasConnectingPeers) {
+                updateStatus('disconnected', 'Connection Lost');
             }
         }
 

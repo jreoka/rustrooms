@@ -1815,6 +1815,7 @@
             delete peerScreenVideoTrackId[userId];
             delete pendingCandidates[userId];
             checkEmpty();
+            updateConnectionStatus();
         }
 
         function sendSignal(toId, data) {

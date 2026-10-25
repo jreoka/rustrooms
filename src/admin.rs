@@ -429,7 +429,7 @@ pub(crate) fn resume_grace_secs() -> u64 {
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|v| (1..=600).contains(v))
-        .unwrap_or(45)
+        .unwrap_or(15)
 }
 
 pub(crate) fn current_unix_secs() -> u64 {
