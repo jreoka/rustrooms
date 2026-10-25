@@ -20,28 +20,28 @@
     --md-on-primary-container: #C9CFF5;
     --md-secondary: #A7AAB3;
     --md-on-secondary: #1B1C20;
-    --md-secondary-container: #222329;  /* neutral control surface */
+    --md-secondary-container: #17171B;  /* neutral control surface */
     --md-on-secondary-container: #E3E4E8;
     --md-tertiary: #A7AAB3;
     --md-on-tertiary: #1B1C20;
-    --md-tertiary-container: #26272E;
+    --md-tertiary-container: #1A1A1E;
     --md-on-tertiary-container: #E3E4E8;
     --md-error: #E5484D;
     --md-on-error: #FFFFFF;
     --md-error-container: #4C1D1F;
     --md-on-error-container: #F5C6C8;
-    --md-surface: #0B0C0E;              /* app background */
+    --md-surface: #050506;              /* app background */
     --md-on-surface: #ECEEF1;
     --md-on-surface-variant: #A7AAB3;
-    --md-surface-variant: #2C2D34;
+    --md-surface-variant: #232328;
     --md-on-surface-variant-hi: #ECEEF1;
-    --md-outline: #3A3B43;              /* strong border */
-    --md-outline-variant: #222329;      /* hairline border */
-    --md-surface-container-lowest: #07080A;
-    --md-surface-container-low: #121316;   /* panels, sidebar, taskbar */
-    --md-surface-container: #17181C;       /* cards, tiles */
-    --md-surface-container-high: #1E1F24;  /* inputs, chips, rows */
-    --md-surface-container-highest: #26272E; /* hover / raised */
+    --md-outline: #2E2E35;              /* strong border */
+    --md-outline-variant: #1B1B20;      /* hairline border */
+    --md-surface-container-lowest: #000000;
+    --md-surface-container-low: #0A0A0B;   /* panels, sidebar, taskbar */
+    --md-surface-container: #0E0E10;       /* cards, tiles */
+    --md-surface-container-high: #131315;  /* inputs, chips, rows */
+    --md-surface-container-highest: #1A1A1E; /* hover / raised */
 
     /* ---- legacy aliases (kept so inline styles & JS keep working) ---- */
     --bg-primary: var(--md-surface);
@@ -98,8 +98,78 @@
     --radius-xl: 20px;   /* panels, dialogs */
     --radius-pill: 9999px;
 
+    /* RGB triplets mirroring the neutral ramp. tailwind-config.js
+       builds its neutral scales from these, so utilities like
+       bg-zinc-800 / text-zinc-400 follow the active theme too. */
+    --c-surface: 5 5 6;
+    --c-low: 10 10 11;
+    --c-container: 14 14 16;
+    --c-high: 19 19 21;
+    --c-highest: 26 26 30;
+    --c-outline: 46 46 53;
+    --c-on-surface-variant: 167 170 179;
+    --c-on-surface: 236 238 241;
+
     --ease-out: cubic-bezier(0.2, 0, 0, 1);
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ============================================================
+ * Light theme — same tokens, light values. Enabled by
+ * data-theme="light" on <html> (toggle in the top bar and in
+ * Settings; persisted in localStorage as rustrooms_theme).
+ * ============================================================ */
+:root[data-theme="light"] {
+    color-scheme: light;
+
+    --md-primary-container: #DCE0F5;
+    --md-on-primary-container: #2C3260;
+    --md-secondary: #5F626B;
+    --md-on-secondary: #FFFFFF;
+    --md-secondary-container: #E8E8EC;
+    --md-on-secondary-container: #26272B;
+    --md-tertiary: #5F626B;
+    --md-on-tertiary: #FFFFFF;
+    --md-tertiary-container: #E1E1E6;
+    --md-on-tertiary-container: #26272B;
+    --md-error-container: #F9DCDE;
+    --md-on-error-container: #7A1F22;
+    --md-surface: #F4F4F6;
+    --md-on-surface: #17181C;
+    --md-on-surface-variant: #5F626B;
+    --md-surface-variant: #D8D8DE;
+    --md-on-surface-variant-hi: #17181C;
+    --md-outline: #C6C7CE;
+    --md-outline-variant: #DFDFE4;
+    --md-surface-container-lowest: #E9E9ED;
+    --md-surface-container-low: #FFFFFF;
+    --md-surface-container: #FFFFFF;
+    --md-surface-container-high: #EFEFF1;
+    --md-surface-container-highest: #E3E3E8;
+
+    --accent-hover: #4F5CC4;
+
+    --c-surface: 244 244 246;
+    --c-low: 255 255 255;
+    --c-container: 255 255 255;
+    --c-high: 239 239 241;
+    --c-highest: 227 227 232;
+    --c-outline: 198 199 206;
+    --c-on-surface-variant: 95 98 107;
+    --c-on-surface: 23 24 28;
+}
+
+/* A few spots hardcode white text for the dark scheme; on light
+   surfaces they take the regular on-surface color instead. */
+:root[data-theme="light"] #inviteChannelName,
+:root[data-theme="light"] #onTheGoSpeakingName {
+    color: var(--md-on-surface);
+}
+:root[data-theme="light"] #onTheGoOverlay button {
+    color: var(--md-on-surface);
+}
+:root[data-theme="light"] #onTheGoOverlay button.bg-red-600 {
+    color: #FFFFFF;
 }
 
 /* Kill every Tailwind/legacy shadow utility — flat, no elevation shadows. */

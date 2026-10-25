@@ -8,7 +8,8 @@
     {{META_TAGS}}
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" type="image/svg+xml" href="/icon.svg">
-    <meta name="theme-color" content="#0B0C0E">
+    <meta name="theme-color" content="#050506">
+    <script>try { var rrTheme = localStorage.getItem('rustrooms_theme'); if (rrTheme) document.documentElement.dataset.theme = rrTheme; } catch (e) {}</script>
     <script src="/assets/tailwind.js"></script>
     <script src="/assets/tailwind-config.js"></script>
     <link href="/assets/inter.css" rel="stylesheet">
@@ -331,6 +332,16 @@
                         <div class="border-t border-[var(--border-subtle)] pt-4 mt-4 space-y-3 text-left">
                             <div class="m3-row flex items-center justify-between">
                                 <div class="flex flex-col">
+                                    <span class="text-sm font-semibold text-white">Light Mode</span>
+                                    <span class="text-xs text-zinc-400">Use a light color scheme instead of the near-black one</span>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
+                                    <input type="checkbox" id="settingsTheme" onchange="toggleTheme(this.checked)" class="sr-only peer">
+                                    <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
+                                </label>
+                            </div>
+                            <div class="m3-row flex items-center justify-between">
+                                <div class="flex flex-col">
                                     <span class="text-sm font-semibold text-white">Low Bandwidth Mode</span>
                                     <span class="text-xs text-zinc-400">Reduces audio & video quality to save data</span>
                                 </div>
@@ -495,6 +506,11 @@
                     <span class="text-xs md:text-sm font-medium hidden md:inline-block" style="color: var(--text-primary);">Invite</span>
                     <svg id="iconCopy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                 </div>
+
+                <button id="btnTheme" onclick="toggleTheme()" class="control-btn shadow-lg !w-10 !h-10 md:!w-12 md:!h-12 flex-shrink-0" title="Toggle light mode" aria-label="Toggle light mode">
+                    <svg id="iconThemeSun" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                    <svg id="iconThemeMoon" class="hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                </button>
             </div>
         </div>
 

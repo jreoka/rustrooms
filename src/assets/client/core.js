@@ -3154,3 +3154,35 @@
             await requestWakeLock();
         }
 
+
+        // ---- Theme: near-black dark (default) / optional light ----
+        function currentTheme() {
+            return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+        }
+
+        function applyTheme(theme) {
+            const light = theme === 'light';
+            if (light) {
+                document.documentElement.dataset.theme = 'light';
+            } else {
+                delete document.documentElement.dataset.theme;
+            }
+            const meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute('content', light ? '#F4F4F6' : '#050506');
+            const sun = document.getElementById('iconThemeSun');
+            const moon = document.getElementById('iconThemeMoon');
+            if (sun) sun.classList.toggle('hidden', light);
+            if (moon) moon.classList.toggle('hidden', !light);
+            const settingsTheme = document.getElementById('settingsTheme');
+            if (settingsTheme) settingsTheme.checked = light;
+        }
+
+        function toggleTheme(force) {
+            const next = typeof force === 'boolean'
+                ? (force ? 'light' : 'dark')
+                : (currentTheme() === 'light' ? 'dark' : 'light');
+            try { localStorage.setItem('rustrooms_theme', next); } catch (e) {}
+            applyTheme(next);
+        }
+
+        applyTheme(currentTheme());

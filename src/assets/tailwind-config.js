@@ -1,3 +1,19 @@
+        // Neutral ramp driven by the --c-* CSS variables in app.css,
+        // so every zinc/slate/gray/neutral utility follows the
+        // active theme (dark by default, light via data-theme).
+        const rrNeutral = {
+            50: 'rgb(var(--c-surface) / <alpha-value>)',
+            100: 'rgb(var(--c-surface) / <alpha-value>)',
+            200: 'rgb(var(--c-container) / <alpha-value>)',
+            300: 'rgb(var(--c-on-surface) / <alpha-value>)',
+            400: 'rgb(var(--c-on-surface-variant) / <alpha-value>)',
+            500: 'rgb(var(--c-on-surface-variant) / <alpha-value>)',
+            600: 'rgb(var(--c-on-surface-variant) / <alpha-value>)',
+            700: 'rgb(var(--c-outline) / <alpha-value>)',
+            800: 'rgb(var(--c-highest) / <alpha-value>)',
+            900: 'rgb(var(--c-high) / <alpha-value>)',
+            950: 'rgb(var(--c-low) / <alpha-value>)',
+        };
         tailwind.config = {
             future: {
                 hoverOnlyWhenSupported: true,
@@ -9,26 +25,10 @@
                         // text-zinc-400, border-zinc-700 resolve to the
                         // exact hexes of the app.css palette: neutral zinc
                         // surfaces, hairline borders, one indigo accent.
-                        slate: {
-                            50: '#0B0C0E', 100: '#0B0C0E', 200: '#17181C', 300: '#ECEEF1',
-                            400: '#A7AAB3', 500: '#A7AAB3', 600: '#A7AAB3', 700: '#3A3B43',
-                            800: '#26272E', 900: '#1E1F24', 950: '#121316',
-                        },
-                        zinc: {
-                            50: '#0B0C0E', 100: '#0B0C0E', 200: '#17181C', 300: '#ECEEF1',
-                            400: '#A7AAB3', 500: '#A7AAB3', 600: '#A7AAB3', 700: '#3A3B43',
-                            800: '#26272E', 900: '#1E1F24', 950: '#121316',
-                        },
-                        gray: {
-                            50: '#0B0C0E', 100: '#0B0C0E', 200: '#17181C', 300: '#ECEEF1',
-                            400: '#A7AAB3', 500: '#A7AAB3', 600: '#A7AAB3', 700: '#3A3B43',
-                            800: '#26272E', 900: '#1E1F24', 950: '#121316',
-                        },
-                        neutral: {
-                            50: '#0B0C0E', 100: '#0B0C0E', 200: '#17181C', 300: '#ECEEF1',
-                            400: '#A7AAB3', 500: '#A7AAB3', 600: '#A7AAB3', 700: '#3A3B43',
-                            800: '#26272E', 900: '#1E1F24', 950: '#121316',
-                        },
+                        slate: rrNeutral,
+                        zinc: rrNeutral,
+                        gray: rrNeutral,
+                        neutral: rrNeutral,
                         indigo: {
                             50: '#C9CFF5', 100: '#C9CFF5', 200: '#C9CFF5', 300: '#C9CFF5',
                             400: '#7180DC', 500: '#5E6AD2', 600: '#5E6AD2', 700: '#2C3260',
