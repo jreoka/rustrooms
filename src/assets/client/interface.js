@@ -1406,7 +1406,13 @@
             }
         }
 
+        let inviteDurationTimer = null;
+
         function proceedToSetup() {
+            if (inviteDurationTimer) {
+                clearInterval(inviteDurationTimer);
+                inviteDurationTimer = null;
+            }
             sessionStorage.setItem('rustrooms_welcomed', 'true');
             const inviteOverlay = document.getElementById('inviteWelcomeOverlay');
             const invitePanel = inviteOverlay.querySelector('.glass-panel');
@@ -1490,13 +1496,17 @@
                     document.getElementById('inviteAudienceEmpty').classList.toggle('hidden', audienceCount > 0);
                 }
                 
+                if (inviteDurationTimer) {
+                    clearInterval(inviteDurationTimer);
+                    inviteDurationTimer = null;
+                }
                 if (data.created_at > 0) {
                     const updateDuration = () => {
                         const el = document.getElementById('inviteCallDuration');
                         if (el) el.innerText = `Running for ${formatDuration(data.created_at)}`;
                     };
                     updateDuration();
-                    setInterval(updateDuration, 1000);
+                    inviteDurationTimer = setInterval(updateDuration, 1000);
                 }
                 
                 const inviteOverlay = document.getElementById('inviteWelcomeOverlay');

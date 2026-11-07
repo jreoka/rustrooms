@@ -146,6 +146,10 @@
                                     applyAdminState(msg.data);
                                     break;
                                 case 'knock-waiting':
+                                    if (msg.userId) {
+                                        persistentUserId = msg.userId;
+                                        localStorage.setItem('rustrooms_user_id', persistentUserId);
+                                    }
                                     showKnockWaiting(false);
                                     break;
                                 case 'knock-approved':
@@ -1981,30 +1985,19 @@
             }
 
             Object.keys(peers).forEach(userId => {
-                if (peers[userId]) {
-                    peers[userId].close();
-                    delete peers[userId];
-                }
-
-                const vid = document.getElementById(`vid-${userId}`);
-                if (vid) {
-                    vid.pause();
-                    vid.srcObject = null;
-                }
-
-                const screenAud = document.getElementById(`aud-screen-${userId}`);
-                if (screenAud) {
-                    screenAud.pause();
-                    screenAud.srcObject = null;
-                    screenAud.remove();
-                }
-
-                const volRowScreen = document.getElementById(`vol-row-screen-${userId}`);
-                if (volRowScreen) volRowScreen.remove();
-
-                const el = document.getElementById(`wrapper-${userId}`);
-                if (el) el.remove();
+                removePeer(userId);
+                delete peerCamStatus[userId];
+                delete peerScreenStatus[userId];
+                delete peerScreenHasAudio[userId];
             });
+            cleanupAudioMonitor('localWrapper');
+            stopGifFrameAnimation('localWrapper');
+            stopGifFrameAnimation('localWrapper-sidebar');
+            userAvatarCache = {};
+            recentCallPeers = {};
+            globalRoomList = {};
+            pendingKnocks = [];
+            renderKnocks();
 
             if (ws) {
                 ws.onclose = null;
@@ -2055,6 +2048,10 @@
                 if (inviteOverlay) {
                     inviteOverlay.classList.add('hidden', 'opacity-0');
                 }
+            }
+            if (appLayout) {
+                appLayout.classList.add('hidden');
+                appLayout.classList.remove('flex');
             }
             if (mainApp) mainApp.style.display = 'none';
             if (taskbar) taskbar.style.display = 'none';

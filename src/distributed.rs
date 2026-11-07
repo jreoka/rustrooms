@@ -320,6 +320,28 @@ pub(crate) async fn reconcile_distributed_node(
     affected_rooms
 }
 
+pub(crate) async fn purge_room_state(state: &AppState, room_id: &str) {
+    state.channel_creation_times.lock().await.remove(room_id);
+    state.admin_rooms.lock().await.remove(room_id);
+    state
+        .away_seats
+        .lock()
+        .await
+        .retain(|(r, _), _| r != room_id);
+    state
+        .resume_records
+        .lock()
+        .await
+        .retain(|(r, _), _| r != room_id);
+    crate::admin::persist_state(state).await;
+}
+
+async fn room_has_pending_knocks(state: &AppState, room_id: &str) -> bool {
+    state.admin_rooms.lock().await.get(room_id).is_some_and(|a| {
+        !a.pending.is_empty() || a.remote_pending.values().any(|list| !list.is_empty())
+    })
+}
+
 pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str) {
     let has_remote_users = state
         .remote_users
@@ -334,7 +356,7 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
         .await
         .get(room_id)
         .is_none_or(|room| room.values().all(HashMap::is_empty));
-    if !local_is_empty || has_remote_users {
+    if !local_is_empty || has_remote_users || room_has_pending_knocks(state, room_id).await {
         return;
     }
 
@@ -366,7 +388,7 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
             .await
             .get(&room_id)
             .is_some_and(|room| room.values().any(|channel| !channel.is_empty()));
-        if has_remote_users {
+        if has_remote_users || room_has_pending_knocks(&state, &room_id).await {
             return;
         }
 
@@ -383,9 +405,7 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
             }
         };
         if removed {
-            state.channel_creation_times.lock().await.remove(&room_id);
-            state.admin_rooms.lock().await.remove(&room_id);
-            crate::admin::persist_state(&state).await;
+            purge_room_state(&state, &room_id).await;
             let mut generations = state.room_cleanup_generations.lock().await;
             if generations.get(&room_id).copied() == Some(generation) {
                 generations.remove(&room_id);
@@ -938,6 +958,12 @@ async fn apply_distributed_message(
         }
         "mod-action" => {
             if let Some(ref text) = msg.signal_msg {
+                if text.contains("\"channel-moved\"") {
+                    let mut lock = state.admin_rooms.lock().await;
+                    if let Some(a) = lock.get_mut(&msg.room_id) {
+                        a.approved.insert(msg.user_id.clone());
+                    }
+                }
                 let rooms_lock = rooms.lock().await;
                 if let Some(room) = rooms_lock.get(&msg.room_id) {
                     for (_, channel) in room.iter() {
@@ -1763,5 +1789,133 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
 
         let rooms = state.rooms.lock().await;
         assert!(rooms.get("room").unwrap().contains_key("old"));
+    }
+
+    #[tokio::test]
+    async fn purge_room_state_clears_away_seats_resume_tokens_and_admin_state() {
+        let state = test_state();
+        let uid = Uuid::new_v4().to_string();
+        let token = crate::admin::issue_resume_token(&state, "room-x", &uid, "General").await;
+        assert!(
+            crate::admin::validate_resume_token(&state, "room-x", &uid, "General", Some(&token))
+                .await
+        );
+        {
+            let mut away = state.away_seats.lock().await;
+            away.insert(
+                ("room-x".to_string(), uid.clone()),
+                AwayMark {
+                    channel_id: "General".to_string(),
+                    generation: 1,
+                    tx: test_spy_channel().0,
+                },
+            );
+            let mut admins = state.admin_rooms.lock().await;
+            admins.entry("room-x".to_string()).or_default().lobby = true;
+            let mut times = state.channel_creation_times.lock().await;
+            times
+                .entry("room-x".to_string())
+                .or_default()
+                .insert("General".to_string(), 100);
+        }
+
+        purge_room_state(&state, "room-x").await;
+
+        assert!(!state.admin_rooms.lock().await.contains_key("room-x"));
+        assert!(
+            !state
+                .channel_creation_times
+                .lock()
+                .await
+                .contains_key("room-x")
+        );
+        assert!(
+            !state
+                .away_seats
+                .lock()
+                .await
+                .contains_key(&("room-x".to_string(), uid.clone()))
+        );
+        assert!(
+            !state
+                .resume_records
+                .lock()
+                .await
+                .contains_key(&("room-x".to_string(), uid))
+        );
+    }
+
+    #[tokio::test]
+    async fn schedule_empty_room_cleanup_skips_room_with_pending_lobby_knock() {
+        let state = test_state();
+        let knocker_id = Uuid::new_v4().to_string();
+        {
+            let mut admins = state.admin_rooms.lock().await;
+            let room_admin = admins.entry("lobby-room".to_string()).or_default();
+            room_admin.lobby = true;
+            room_admin.pending.insert(
+                knocker_id,
+                PendingKnock {
+                    nickname: "Guest".to_string(),
+                    channel: "General".to_string(),
+                    tx: test_spy_channel().0,
+                },
+            );
+        }
+
+        schedule_empty_room_cleanup(&state, "lobby-room").await;
+        assert!(
+            !state
+                .room_cleanup_generations
+                .lock()
+                .await
+                .contains_key("lobby-room"),
+            "cleanup must not be scheduled while a lobby knock is pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_node_channel_move_preapproves_target_for_lobby_bypass() {
+        let state = test_state();
+        let target_uid = Uuid::new_v4().to_string();
+        let (target_tx, mut target_rx) = test_spy_channel();
+        {
+            let mut rooms = state.rooms.lock().await;
+            rooms
+                .entry("room-1".to_string())
+                .or_default()
+                .entry("General".to_string())
+                .or_default()
+                .insert(target_uid.clone(), (target_tx, test_user_status()));
+            let mut admins = state.admin_rooms.lock().await;
+            admins.entry("room-1".to_string()).or_default().lobby = true;
+        }
+
+        let mut move_msg =
+            test_distributed_message_typed("mod-action", "room-1", "Stage", &target_uid);
+        move_msg.signal_msg = Some(crate::admin::signal_text(
+            "channel-moved",
+            Some(target_uid.clone()),
+            Some(serde_json::json!({ "channelId": "Stage" })),
+        ));
+
+        handle_distributed_message(&move_msg, &state.rooms, &state.remote_users, &state).await;
+
+        assert!(
+            state
+                .admin_rooms
+                .lock()
+                .await
+                .get("room-1")
+                .unwrap()
+                .approved
+                .contains(&target_uid),
+            "moved user should be pre-approved on the hosting node so channel switch bypasses lobby"
+        );
+        let delivered = target_rx.try_recv().unwrap().unwrap();
+        match delivered {
+            Message::Text(t) => assert!(t.contains("channel-moved")),
+            _ => panic!("expected channel-moved text message"),
+        }
     }
 }

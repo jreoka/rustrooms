@@ -85,7 +85,10 @@ pub(crate) async fn new_room(
             }
             // Static routes shadow /{room_id}, so these names would redirect
             // or 404 instead of creating a room.
-            if trimmed == "new" {
+            if matches!(
+                trimmed.to_ascii_lowercase().as_str(),
+                "new" | "cluster-ws" | "assets" | "fonts" | "ws"
+            ) {
                 return Err((
                     axum::http::StatusCode::BAD_REQUEST,
                     "That room name is reserved. Please choose another.",
@@ -347,7 +350,7 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     #[tokio::test]
     async fn new_room_rejects_reserved_names() {
         let state = test_state(None);
-        for name in ["new"] {
+        for name in ["new", "NEW", "cluster-ws", "CLUSTER-WS", "assets", "fonts", "ws"] {
             let params = HashMap::from([("name".to_string(), name.to_string())]);
             let err = new_room(State(state.clone()), HeaderMap::new(), Query(params))
                 .await

@@ -36,13 +36,17 @@
         });
     }
 
-    function loadImageDims(dataUrl) {
+    function loadImage(dataUrl) {
         return new Promise((resolve, reject) => {
             const img = new Image();
-            img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+            img.onload = () => resolve(img);
             img.onerror = () => reject(new Error('Failed to decode image'));
             img.src = dataUrl;
         });
+    }
+
+    function loadImageDims(dataUrl) {
+        return loadImage(dataUrl).then(img => ({ width: img.naturalWidth, height: img.naturalHeight }));
     }
 
     // FNV-1a 32-bit hash over RGBA pixels; also flags any translucent pixel.
@@ -752,7 +756,7 @@
         return { avatar: jpeg, isGif: false };
     }
 
-    function cropGifFrames(frames, srcW, srcH, cx, cy, cw, ch) {
+    async function cropGifFrames(frames, srcW, srcH, cx, cy, cw, ch) {
         const src = document.createElement('canvas');
         src.width = srcW;
         src.height = srcH;
@@ -771,7 +775,7 @@
                 data: new Uint8ClampedArray(dctx.getImageData(0, 0, cw, ch).data),
                 delay: frame.delay,
             });
-            yieldToEventLoop();
+            await yieldToEventLoop();
         }
         return out;
     }
@@ -792,7 +796,7 @@
         cy = Math.max(0, Math.min(cy, captured.height - 1));
         cw = Math.max(1, Math.min(cw, captured.width - cx));
         ch = Math.max(1, Math.min(ch, captured.height - cy));
-        const cropped = cropGifFrames(captured.frames, captured.width, captured.height, cx, cy, cw, ch);
+        const cropped = await cropGifFrames(captured.frames, captured.width, captured.height, cx, cy, cw, ch);
         const rawBudget = Math.floor((MAX_AVATAR_DATA_URL_LEN * 3) / 4);
         const maxSide = Math.max(cw, ch);
         const sizes = [{ w: cw, h: ch }];

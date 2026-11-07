@@ -190,7 +190,6 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
         let rooms_clone = state.rooms.clone();
         let cleanup_clone = state.room_cleanup_generations.clone();
         let remote_users_clone = state.remote_users.clone();
-        let times_clone = state.channel_creation_times.clone();
         let admin_clone = state.admin_rooms.clone();
         let state_clone = state.clone();
         let room_id_clone = room_id.to_string();
@@ -215,14 +214,21 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
                     .get(&room_id_clone)
                     .map(|r| r.values().any(|c| !c.is_empty()))
                     .unwrap_or(false);
-                if has_remote {
+                let has_pending_knocks = admin_clone
+                    .lock()
+                    .await
+                    .get(&room_id_clone)
+                    .is_some_and(|a| {
+                        !a.pending.is_empty()
+                            || a.remote_pending.values().any(|list| !list.is_empty())
+                    });
+                if has_remote || has_pending_knocks {
                     false
                 } else {
                     let mut rooms_lock = rooms_clone.lock().await;
                     let should_remove_room = rooms_lock
                         .get(&room_id_clone)
-                        .map(|room| room.values().all(|c| c.is_empty()))
-                        .unwrap_or(false);
+                        .is_none_or(|room| room.values().all(|c| c.is_empty()));
                     if should_remove_room {
                         rooms_lock.remove(&room_id_clone);
                         true
@@ -233,9 +239,7 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
             };
 
             if removed_room {
-                times_clone.lock().await.remove(&room_id_clone);
-                admin_clone.lock().await.remove(&room_id_clone);
-                crate::admin::persist_state(&state_clone).await;
+                crate::distributed::purge_room_state(&state_clone, &room_id_clone).await;
                 let mut cleanup_lock = cleanup_clone.lock().await;
                 if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
                     cleanup_lock.remove(&room_id_clone);
@@ -253,7 +257,6 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
                     let rooms_retry = rooms_clone.clone();
                     let cleanup_retry = cleanup_clone.clone();
                     let remote_retry = remote_users_clone.clone();
-                    let times_retry = times_clone.clone();
                     let admin_retry = admin_clone.clone();
                     let state_retry = state_clone.clone();
                     let rid_retry = room_id_clone.clone();
@@ -271,8 +274,16 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
                             .get(&rid_retry)
                             .map(|r| r.values().any(|c| !c.is_empty()))
                             .unwrap_or(false);
-                        if has_remote {
-                            // Still has remote users, clear generation so future activity can re-trigger.
+                        let has_pending_knocks = admin_retry
+                            .lock()
+                            .await
+                            .get(&rid_retry)
+                            .is_some_and(|a| {
+                                !a.pending.is_empty()
+                                    || a.remote_pending.values().any(|list| !list.is_empty())
+                            });
+                        if has_remote || has_pending_knocks {
+                            // Still has remote users or pending knocks, clear generation so future activity can re-trigger.
                             let mut cl = cleanup_retry.lock().await;
                             if cl.get(&rid_retry).copied() == Some(next_gen) {
                                 cl.remove(&rid_retry);
@@ -283,8 +294,7 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
                             let mut rl = rooms_retry.lock().await;
                             let should = rl
                                 .get(&rid_retry)
-                                .map(|rm| rm.values().all(|c| c.is_empty()))
-                                .unwrap_or(false);
+                                .is_none_or(|rm| rm.values().all(|c| c.is_empty()));
                             if should {
                                 rl.remove(&rid_retry);
                                 true
@@ -293,9 +303,7 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
                             }
                         };
                         if removed {
-                            times_retry.lock().await.remove(&rid_retry);
-                            admin_retry.lock().await.remove(&rid_retry);
-                            crate::admin::persist_state(&state_retry).await;
+                            crate::distributed::purge_room_state(&state_retry, &rid_retry).await;
                             let mut cl = cleanup_retry.lock().await;
                             if cl.get(&rid_retry).copied() == Some(next_gen) {
                                 cl.remove(&rid_retry);
@@ -999,8 +1007,11 @@ pub(crate) async fn handle_socket(
                             }
 
                             if park_for_knock {
-                                let waiting =
-                                    crate::admin::signal_text("knock-waiting", None, None);
+                                let waiting = crate::admin::signal_text(
+                                    "knock-waiting",
+                                    Some(user_id.clone()),
+                                    None,
+                                );
                                 let _ = tx.try_send(Ok(Message::Text(waiting.into())));
                                 crate::admin::send_knock_update(&state, &room_id).await;
                                 is_pending_knock = true;
@@ -1018,6 +1029,7 @@ pub(crate) async fn handle_socket(
                                     room_id
                                 );
                             }
+                            is_pending_knock = false;
                             is_joined = true;
 
                             if resume_ok || warm_resume {
@@ -1623,13 +1635,17 @@ pub(crate) async fn handle_socket(
                                 let mut rooms_lock = rooms.lock().await;
                                 let mut kicked = false;
                                 let mut kicked_tx = None;
+                                let mut kicked_channel = channel_id.clone();
 
-                                if let Some(room) = rooms_lock.get_mut(&room_id)
-                                    && let Some(channel) = room.get_mut(&channel_id)
-                                    && let Some((tx, _)) = channel.remove(&kick_uid)
-                                {
-                                    kicked = true;
-                                    kicked_tx = Some(tx);
+                                if let Some(room) = rooms_lock.get_mut(&room_id) {
+                                    for (ch, channel) in room.iter_mut() {
+                                        if let Some((tx, _)) = channel.remove(&kick_uid) {
+                                            kicked = true;
+                                            kicked_tx = Some(tx);
+                                            kicked_channel = ch.clone();
+                                            break;
+                                        }
+                                    }
                                 }
 
                                 if kicked {
@@ -1642,7 +1658,7 @@ pub(crate) async fn handle_socket(
                                     .unwrap();
 
                                     if let Some(room) = rooms_lock.get(&room_id)
-                                        && let Some(channel) = room.get(&channel_id)
+                                        && let Some(channel) = room.get(&kicked_channel)
                                     {
                                         for (_uid, (tx, _)) in channel.iter() {
                                             let _ = tx.try_send(Ok(Message::Text(
@@ -1670,14 +1686,14 @@ pub(crate) async fn handle_socket(
                                         remove_remote_user(
                                             &mut rl,
                                             &room_id,
-                                            &channel_id,
+                                            &kicked_channel,
                                             &kick_uid,
                                         );
                                     }
                                     remove_remote_user_owner(
                                         &state.remote_user_owners,
                                         &room_id,
-                                        &channel_id,
+                                        &kicked_channel,
                                         &kick_uid,
                                     )
                                     .await;
@@ -1694,7 +1710,7 @@ pub(crate) async fn handle_socket(
                                         &DistributedMessage {
                                             msg_type: "user-kicked".into(),
                                             room_id: room_id.clone(),
-                                            channel_id: channel_id.clone(),
+                                            channel_id: kicked_channel.clone(),
                                             user_id: kick_uid.clone(),
                                             msg_id: Uuid::new_v4().to_string(),
                                             status: None,
@@ -1718,14 +1734,15 @@ pub(crate) async fn handle_socket(
                                     drop(rooms_lock);
                                     // Target isn't local; publish the kick so the
                                     // hosting instance removes them and closes the socket.
-                                    let is_remote = {
+                                    let remote_channel = {
                                         let rl = remote_users.lock().await;
-                                        rl.get(&room_id)
-                                            .and_then(|r| r.get(&channel_id))
-                                            .map(|c| c.contains_key(&kick_uid))
-                                            .unwrap_or(false)
+                                        rl.get(&room_id).and_then(|r| {
+                                            r.iter().find_map(|(ch, c)| {
+                                                c.contains_key(&kick_uid).then(|| ch.clone())
+                                            })
+                                        })
                                     };
-                                    if is_remote {
+                                    if let Some(remote_channel) = remote_channel {
                                         // Remove from this node's own view: this
                                         // node won't process its own broadcast,
                                         // and the hosting node's cleanup only
@@ -1735,14 +1752,14 @@ pub(crate) async fn handle_socket(
                                             remove_remote_user(
                                                 &mut rl,
                                                 &room_id,
-                                                &channel_id,
+                                                &remote_channel,
                                                 &kick_uid,
                                             );
                                         }
                                         remove_remote_user_owner(
                                             &state.remote_user_owners,
                                             &room_id,
-                                            &channel_id,
+                                            &remote_channel,
                                             &kick_uid,
                                         )
                                         .await;
@@ -1758,7 +1775,7 @@ pub(crate) async fn handle_socket(
                                             &DistributedMessage {
                                                 msg_type: "user-kicked".into(),
                                                 room_id: room_id.clone(),
-                                                channel_id: channel_id.clone(),
+                                                channel_id: remote_channel,
                                                 user_id: kick_uid.clone(),
                                                 msg_id: Uuid::new_v4().to_string(),
                                                 status: None,
@@ -1810,6 +1827,7 @@ pub(crate) async fn handle_socket(
                                 "promote" | "demote" | "to-stage" | "to-audience" => {
                                     let mut refusal: Option<(&str, &str)> = None;
                                     let mut changed = false;
+                                    let mut lost_stage_voice = false;
                                     {
                                         let mut lock = state.admin_rooms.lock().await;
                                         if let Some(a) = lock.get_mut(&room_id) {
@@ -1831,6 +1849,8 @@ pub(crate) async fn handle_socket(
                                                         let unparked =
                                                             a.audience.remove(&target);
                                                         changed = demoted || unparked;
+                                                        lost_stage_voice = a.kind == RoomKind::Stage
+                                                            && !a.can_speak(&target);
                                                     }
                                                 }
                                                 "to-stage" => {
@@ -1853,6 +1873,7 @@ pub(crate) async fn handle_socket(
                                                         a.audience.remove(&target)
                                                     };
                                                     changed = unseated || parked;
+                                                    lost_stage_voice = true;
                                                 }
                                                 _ => {}
                                             }
@@ -1869,15 +1890,16 @@ pub(crate) async fn handle_socket(
                                         crate::admin::broadcast_admin_update(&state, &room_id)
                                             .await;
                                     }
-                                    if action == "to-audience" {
+                                    if lost_stage_voice {
                                         // Silence the demoted user's stored
                                         // status immediately; their client
                                         // also self-mutes on admin-update.
                                         let mut updated_status = None;
+                                        let mut target_channel = None;
                                         {
                                             let mut rooms_lock = rooms.lock().await;
                                             if let Some(room) = rooms_lock.get_mut(&room_id) {
-                                                for (_, channel) in room.iter_mut() {
+                                                for (ch, channel) in room.iter_mut() {
                                                     if let Some((_, status)) =
                                                         channel.get_mut(&target)
                                                     {
@@ -1885,11 +1907,14 @@ pub(crate) async fn handle_socket(
                                                         status.is_screen_sharing = false;
                                                         updated_status =
                                                             Some(status.clone());
+                                                        target_channel = Some(ch.clone());
                                                         break;
                                                     }
                                                 }
                                             }
-                                            if let Some(status) = &updated_status {
+                                            if let (Some(status), Some(tch)) =
+                                                (&updated_status, &target_channel)
+                                            {
                                                 let notify_msg =
                                                     serde_json::to_string(&SignalMessage {
                                                         msg_type: "user-update".into(),
@@ -1901,32 +1926,56 @@ pub(crate) async fn handle_socket(
                                                         ),
                                                     })
                                                     .unwrap();
-                                                if let Some(room) = rooms_lock.get(&room_id) {
-                                                    for (_, channel) in room.iter() {
-                                                        for (_, (tx, _)) in channel.iter() {
-                                                            let _ = tx.try_send(Ok(
-                                                                Message::Text(
-                                                                    notify_msg.clone().into(),
-                                                                ),
-                                                            ));
-                                                        }
+                                                if let Some(room) = rooms_lock.get(&room_id)
+                                                    && let Some(channel) = room.get(tch)
+                                                {
+                                                    for (_, (tx, _)) in channel.iter() {
+                                                        let _ = tx.try_send(Ok(
+                                                            Message::Text(
+                                                                notify_msg.clone().into(),
+                                                            ),
+                                                        ));
                                                     }
                                                 }
                                             }
                                         }
-                                        if let Some(status) = updated_status {
+                                        if updated_status.is_none() {
+                                            let mut rl = remote_users.lock().await;
+                                            if let Some(room) = rl.get_mut(&room_id) {
+                                                for (ch, channel) in room.iter_mut() {
+                                                    if let Some(status) = channel.get_mut(&target)
+                                                    {
+                                                        status.is_muted = true;
+                                                        status.is_screen_sharing = false;
+                                                        updated_status = Some(status.clone());
+                                                        target_channel = Some(ch.clone());
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let (Some(status), Some(tch)) =
+                                            (updated_status, target_channel)
+                                        {
                                             distributed_broadcast(
                                                 &state,
                                                 &DistributedMessage {
                                                     msg_type: "user-update".into(),
                                                     room_id: room_id.clone(),
-                                                    channel_id: channel_id.clone(),
+                                                    channel_id: tch,
                                                     user_id: target.clone(),
                                                     msg_id: Uuid::new_v4().to_string(),
                                                     status: Some(status),
                                                     data: None,
                                                     signal_msg: None,
                                                 },
+                                            )
+                                            .await;
+                                            broadcast_channel_list(
+                                                &rooms,
+                                                &remote_users,
+                                                &state.channel_creation_times,
+                                                &room_id,
                                             )
                                             .await;
                                         }
@@ -1953,6 +2002,124 @@ pub(crate) async fn handle_socket(
                                             if !flags.any() {
                                                 a.forced.remove(&target);
                                             }
+                                        }
+                                    }
+                                    // Immediately clamp stored status when an admin
+                                    // imposes mute/deafen/share-off so held seats or
+                                    // slow/uncooperative clients cannot keep stale
+                                    // unmuted/sharing flags in server state.
+                                    if matches!(action.as_str(), "mute" | "deafen" | "share-off") {
+                                        let mut clamped_status = None;
+                                        let mut target_channel = None;
+                                        {
+                                            let mut rooms_lock = rooms.lock().await;
+                                            if let Some(room) = rooms_lock.get_mut(&room_id) {
+                                                for (ch, channel) in room.iter_mut() {
+                                                    if let Some((_, status)) =
+                                                        channel.get_mut(&target)
+                                                    {
+                                                        let mut modified = false;
+                                                        if action == "mute" && !status.is_muted {
+                                                            status.is_muted = true;
+                                                            modified = true;
+                                                        } else if action == "deafen"
+                                                            && !status.is_deafened
+                                                        {
+                                                            status.is_deafened = true;
+                                                            modified = true;
+                                                        } else if action == "share-off"
+                                                            && status.is_screen_sharing
+                                                        {
+                                                            status.is_screen_sharing = false;
+                                                            modified = true;
+                                                        }
+                                                        if modified {
+                                                            clamped_status = Some(status.clone());
+                                                            target_channel = Some(ch.clone());
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if let (Some(status), Some(tch)) =
+                                                (&clamped_status, &target_channel)
+                                            {
+                                                let notify_msg =
+                                                    serde_json::to_string(&SignalMessage {
+                                                        msg_type: "user-update".into(),
+                                                        user_id: Some(target.clone()),
+                                                        target: None,
+                                                        data: Some(
+                                                            serde_json::to_value(status)
+                                                                .unwrap(),
+                                                        ),
+                                                    })
+                                                    .unwrap();
+                                                if let Some(room) = rooms_lock.get(&room_id)
+                                                    && let Some(channel) = room.get(tch)
+                                                {
+                                                    for (_, (tx, _)) in channel.iter() {
+                                                        let _ = tx.try_send(Ok(Message::Text(
+                                                            notify_msg.clone().into(),
+                                                        )));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if clamped_status.is_none() {
+                                            let mut rl = remote_users.lock().await;
+                                            if let Some(room) = rl.get_mut(&room_id) {
+                                                for (ch, channel) in room.iter_mut() {
+                                                    if let Some(status) = channel.get_mut(&target)
+                                                    {
+                                                        let mut modified = false;
+                                                        if action == "mute" && !status.is_muted {
+                                                            status.is_muted = true;
+                                                            modified = true;
+                                                        } else if action == "deafen"
+                                                            && !status.is_deafened
+                                                        {
+                                                            status.is_deafened = true;
+                                                            modified = true;
+                                                        } else if action == "share-off"
+                                                            && status.is_screen_sharing
+                                                        {
+                                                            status.is_screen_sharing = false;
+                                                            modified = true;
+                                                        }
+                                                        if modified {
+                                                            clamped_status = Some(status.clone());
+                                                            target_channel = Some(ch.clone());
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let (Some(status), Some(tch)) =
+                                            (clamped_status, target_channel)
+                                        {
+                                            distributed_broadcast(
+                                                &state,
+                                                &DistributedMessage {
+                                                    msg_type: "user-update".into(),
+                                                    room_id: room_id.clone(),
+                                                    channel_id: tch,
+                                                    user_id: target.clone(),
+                                                    msg_id: Uuid::new_v4().to_string(),
+                                                    status: Some(status),
+                                                    data: None,
+                                                    signal_msg: None,
+                                                },
+                                            )
+                                            .await;
+                                            broadcast_channel_list(
+                                                &rooms,
+                                                &remote_users,
+                                                &state.channel_creation_times,
+                                                &room_id,
+                                            )
+                                            .await;
                                         }
                                     }
                                     let by_name = {
@@ -2026,6 +2193,7 @@ pub(crate) async fn handle_socket(
                                             tx.try_send(Ok(Message::Text(error_msg.into())));
                                         continue;
                                     }
+                                    let mut pending_knock_tx = None;
                                     {
                                         let mut lock = state.admin_rooms.lock().await;
                                         if let Some(a) = lock.get_mut(&room_id) {
@@ -2041,8 +2209,25 @@ pub(crate) async fn handle_socket(
                                             .await;
                                             a.admins.remove(&target);
                                             a.speakers.remove(&target);
+                                            a.audience.remove(&target);
                                             a.forced.remove(&target);
+                                            a.approved.remove(&target);
+                                            pending_knock_tx = a.pending.remove(&target).map(|p| p.tx);
+                                            for list in a.remote_pending.values_mut() {
+                                                list.retain(|item| {
+                                                    item.get("id")
+                                                        .and_then(|v| v.as_str())
+                                                        != Some(target.as_str())
+                                                });
+                                            }
                                         }
+                                    }
+                                    if let Some(ptx) = pending_knock_tx {
+                                        let msg =
+                                            crate::admin::signal_text("knock-denied", None, None);
+                                        let _ = ptx.try_send(Ok(Message::Text(msg.into())));
+                                        let _ = ptx.try_send(Ok(Message::Close(None)));
+                                        crate::admin::send_knock_update(&state, &room_id).await;
                                     }
                                     let notify = crate::admin::signal_text(
                                         "user-banned",
@@ -2082,6 +2267,13 @@ pub(crate) async fn handle_socket(
                                         let _ = vtx.try_send(Ok(Message::Close(None)));
                                     } else {
                                         let mut rl = remote_users.lock().await;
+                                        if let Some(found_ch) = rl.get(&room_id).and_then(|r| {
+                                            r.iter().find_map(|(ch, c)| {
+                                                c.contains_key(&target).then(|| ch.clone())
+                                            })
+                                        }) {
+                                            victim_channel = found_ch;
+                                        }
                                         remove_remote_user(
                                             &mut rl,
                                             &room_id,
@@ -2123,58 +2315,57 @@ pub(crate) async fn handle_socket(
                                 }
                                 "move" => {
                                     let Some(dest) = move_channel else { continue };
-                                    if dest != channel_id {
-                                        // Pre-approve the landing join: the
-                                        // switch closes the old connection
-                                        // first, so without this a lobby room
-                                        // would make the moved user knock.
-                                        {
-                                            let mut lock = state.admin_rooms.lock().await;
-                                            if let Some(a) = lock.get_mut(&room_id) {
-                                                a.approved.insert(target.clone());
-                                            }
+                                    // Pre-approve the landing join: the
+                                    // switch closes the old connection
+                                    // first, so without this a lobby room
+                                    // would make the moved user knock.
+                                    {
+                                        let mut lock = state.admin_rooms.lock().await;
+                                        if let Some(a) = lock.get_mut(&room_id) {
+                                            a.approved.insert(target.clone());
                                         }
-                                        let text = crate::admin::signal_text(
-                                            "channel-moved",
-                                            Some(target.clone()),
-                                            Some(serde_json::json!({
-                                                "channelId": dest
-                                            })),
-                                        );
-                                        let delivered = {
-                                            let rooms_lock = rooms.lock().await;
-                                            let mut delivered = false;
-                                            if let Some(room) = rooms_lock.get(&room_id) {
-                                                for (_, channel) in room.iter() {
-                                                    if let Some((target_tx, _)) =
-                                                        channel.get(&target)
-                                                    {
+                                    }
+                                    let text = crate::admin::signal_text(
+                                        "channel-moved",
+                                        Some(target.clone()),
+                                        Some(serde_json::json!({
+                                            "channelId": dest
+                                        })),
+                                    );
+                                    let mut found_local = false;
+                                    {
+                                        let rooms_lock = rooms.lock().await;
+                                        if let Some(room) = rooms_lock.get(&room_id) {
+                                            for (ch, channel) in room.iter() {
+                                                if let Some((target_tx, _)) =
+                                                    channel.get(&target)
+                                                {
+                                                    found_local = true;
+                                                    if *ch != dest {
                                                         let _ = target_tx.try_send(Ok(
                                                             Message::Text(text.clone().into()),
                                                         ));
-                                                        delivered = true;
-                                                        break;
                                                     }
+                                                    break;
                                                 }
                                             }
-                                            delivered
-                                        };
-                                        if !delivered {
-                                            distributed_broadcast(
-                                                &state,
-                                                &DistributedMessage {
-                                                    msg_type: "mod-action".into(),
-                                                    room_id: room_id.clone(),
-                                                    channel_id: dest.clone(),
-                                                    user_id: target.clone(),
-                                                    msg_id: Uuid::new_v4().to_string(),
-                                                    status: None,
-                                                    data: None,
-                                                    signal_msg: Some(text),
-                                                },
-                                            )
-                                            .await;
                                         }
+                                    }
+                                    if !found_local {
+                                        distributed_broadcast(
+                                            &state,
+                                            &DistributedMessage {
+                                                msg_type: "mod-action".into(),
+                                                room_id: room_id.clone(),
+                                                channel_id: dest.clone(),
+                                                user_id: target.clone(),
+                                                msg_id: Uuid::new_v4().to_string(),
+                                                status: None,
+                                                data: None,
+                                                signal_msg: Some(text),
+                                            },
+                                        )
+                                        .await;
                                     }
                                 }
                                 "knock-approve" | "knock-deny" | "knock-block" => {
