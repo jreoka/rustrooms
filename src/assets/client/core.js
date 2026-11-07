@@ -3021,7 +3021,7 @@
         // Who else is in the current call, by userId. Fed by the peer
         // lifecycle in connection.js so recent entries can say who a
         // "# General" call was actually with.
-        const recentCallPeers = {};
+        let recentCallPeers = {};
 
         function noteRecentCallPeer(userId, name) {
             if (!userId || !name || recentCallPeers[userId] === name) return;
