@@ -1409,12 +1409,16 @@ video.active + .avatar-layer { display: none !important; }
 .user-volume-menu {
     position: fixed;
     z-index: 200;
-    min-width: 240px;
-    max-width: 280px;
+    min-width: 250px;
+    max-width: 290px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background: var(--md-surface-container-high);
     border: 1px solid var(--md-outline-variant);
     border-radius: var(--radius-lg);
-    padding: 16px;
+    padding: 14px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
     opacity: 0;
     transform: scale(0.95) translateY(-8px);
     transform-origin: top left;
@@ -1952,23 +1956,125 @@ video.active + .avatar-layer { display: none !important; }
     border: 1px solid var(--border-subtle);
 }
 
-.uvm-admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.uvm-admin-list,
+.uvm-admin-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
 .uvm-admin-btn {
-    padding: 7px 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px;
     border-radius: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
     color: var(--text-primary);
     background: var(--bg-tertiary);
     border: 1px solid var(--border-subtle);
     cursor: pointer;
-    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+    user-select: none;
 }
-.uvm-admin-btn:hover { border-color: var(--accent); }
-.uvm-admin-btn.danger { color: #f87171; }
-.uvm-admin-btn.danger:hover { border-color: var(--danger); background: rgba(239, 68, 68, 0.08); }
-.uvm-admin-note { grid-column: 1 / -1; font-size: 12px; color: var(--text-muted); text-align: center; padding: 4px 0; }
+.uvm-admin-btn svg {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    opacity: 0.85;
+    transition: opacity 0.15s ease;
+}
+.uvm-admin-btn span {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.uvm-admin-btn:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-tertiary));
+    color: var(--text-primary);
+}
+.uvm-admin-btn:hover svg {
+    opacity: 1;
+}
+.uvm-admin-btn:active {
+    transform: scale(0.985);
+}
+.uvm-admin-btn.danger {
+    color: #f87171;
+}
+.uvm-admin-btn.danger:hover {
+    border-color: var(--danger);
+    background: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+}
+.uvm-admin-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 6px 0;
+}
+.uvm-divider {
+    height: 1px;
+    background: var(--md-outline-variant, var(--border-subtle));
+    margin: 4px 0;
+    opacity: 0.7;
+}
+
+.setup-back-btn {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+    user-select: none;
+}
+@media (min-width: 768px) {
+    .setup-back-btn {
+        top: 28px;
+        left: 28px;
+    }
+}
+.setup-back-btn svg {
+    flex-shrink: 0;
+}
+#inviteWelcomeOverlay .setup-back-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    gap: 6px;
+}
+@media (min-width: 768px) {
+    #inviteWelcomeOverlay .setup-back-btn {
+        top: 24px;
+        left: 24px;
+    }
+}
+.setup-back-btn:hover {
+    background: color-mix(in srgb, var(--accent) 15%, var(--bg-tertiary));
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+.setup-back-btn:active {
+    transform: scale(0.96);
+}
 
 .knock-panel {
     margin-bottom: 16px;
