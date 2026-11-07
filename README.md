@@ -29,28 +29,34 @@ For a production deployment, it is **highly recommended** to set the following e
 *   `ROOM_CREATION_PASSWORD`: Set this to a strong password to prevent unauthorized room creation. If this is not set, anyone can create rooms.
 *   `URL`: When set, restricts access to only requests whose `Host` header matches this value. Useful for preventing access via raw IP or alternative domain names. The value is automatically normalized (scheme and path are stripped).
 
-### Redis Distributed Mode
+### Decentralized P2P Distributed Mode
 
-Set the same `REDIS_URL` on every instance to make them one logical RustRooms deployment. The instances communicate through Redis Pub/Sub, so they do not need direct network paths or inbound coordination ports. Room/channel metadata, empty channels, presence and profile state, moderation events, media toggles, and WebRTC signaling are synchronized.
+Set the same `KEY` on every instance to form one logical RustRooms deployment without any centralized Redis instance or coordination server. Room/channel metadata, empty channels, presence and profile state, admin/stage/lobby state, moderation events, resume tokens, media toggles, and WebRTC signaling are synchronized across peers.
 
 ```text
-# One Redis endpoint
-REDIS_URL=rediss://default:password@your-upstash-host:6379
+# Automatic discovery via BitTorrent Mainline DHT + UDP NAT hole-punching + LAN broadcast
+KEY=a-long-random-shared-secret
 
-# Or two or more independent endpoints for redundancy
-REDIS_URL=rediss://default:password@redis-1.example.com:6379,rediss://default:password@redis-2.example.com:6379
+# Optional: add static WebSocket or UDP peers (works alongside or without DHT)
+CLUSTER_PEERS=wss://peer1.example.com,udp://203.0.113.10:3000
 ```
 
-Upstash's TLS `rediss://` endpoint is recommended. With multiple endpoints, every instance publishes and subscribes through all of them; distributed traffic continues while any shared endpoint remains available. The Redis servers do not need Redis-level replication. Configure the same endpoint list on every RustRooms instance.
+How decentralized discovery and transport work:
 
-Connections retry independently with backoff, nodes exchange authoritative snapshots after reconnecting, and shared heartbeats remove presence only when a node is unreachable through every active Redis path. Large profiles are chunked before publication to stay below typical hosted Redis request limits.
+1. **BitTorrent Mainline DHT (`mainline`)**: Nodes derive info-hashes and a BEP 44 `ed25519` signing key from `KEY` to announce and discover peers' external NAT-mapped UDP ports, LAN endpoints, and WebSocket endpoints on the public Mainline DHT.
+2. **STUN + UDP Hole-Punching + Reliable Chunking**: Each node queries public STUN servers on its P2P UDP socket to learn its reflexive external `IP:port`, advertises it via the DHT, and performs simultaneous authenticated UDP hole-punching (`HMAC-SHA256` under `KEY`) so nodes behind NAT/firewalls without inbound TCP ports open can connect directly P2P. Large payloads (such as avatars and snapshots) are split into MTU-safe chunks with per-chunk ACKs and selective retransmission.
+3. **Zero-Config LAN Broadcast & Peer Exchange (PEX)**: Nodes on the same LAN/subnet discover each other immediately via authenticated UDP broadcast beacons, and connected peers exchange known peer endpoints via PEX.
+4. **WebSocket Mesh (`/cluster-ws`) & Transitive Multi-Hop Routing**: When nodes can reach each other over HTTP/WebSocket (via LAN, port-forwarding, or `CLUSTER_PEERS`), they also stream over `/cluster-ws`. Envelopes are forwarded transitively across up to 8 hops with `envelopeId` deduplication, so any shared peer automatically bridges nodes that cannot punch directly to each other.
 
 Configuration:
 
-* `REDIS_URL`: One URL or a comma-, semicolon-, or newline-separated list of standard `redis://` or TLS `rediss://` URLs.
-* `REDIS_PREFIX`: Optional Pub/Sub namespace. Defaults to `rustrooms`. Set the same value on every instance, and use a different value when unrelated RustRooms deployments share Redis.
-
-Redis is a coordination transport only; audio and video remain peer-to-peer or use the configured TURN server.
+* `KEY` (or `CLUSTER_KEY`): Shared secret enabling decentralized P2P mode, authenticating all UDP/WebSocket peer traffic, and deriving the cluster signing secret for admin/creator keys and resume tokens.
+* `CLUSTER_PEERS` (or `PEERS`): Optional comma-, semicolon-, or newline-separated list of static peer URLs (`ws://`, `wss://`, `http://`, `https://`, `udp://host:port`, or `host:port`).
+* `CLUSTER_DHT`: Enables BitTorrent Mainline DHT discovery (`true` by default; set to `false` for offline/static-mesh-only deployments).
+* `CLUSTER_UDP_PORT`: Optional UDP port for P2P hole-punching and mesh traffic (defaults to `PORT`, falling back to an OS-assigned port if busy).
+* `CLUSTER_SCHEME`: WebSocket scheme for DHT/LAN peers without an explicit scheme (`ws` by default, or `wss`).
+* `CLUSTER_PUBLIC_URL`: Optional externally reachable WebSocket URL for this node to advertise in DHT/PEX records.
+* `STUN_SERVERS`: Optional comma-separated STUN servers for reflexive UDP address discovery (defaults to Google and Cloudflare public STUN servers plus `TURN_URL` if configured).
 
 ### Issues & Bug Reports
 

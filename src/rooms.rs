@@ -235,7 +235,6 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
             if removed_room {
                 times_clone.lock().await.remove(&room_id_clone);
                 admin_clone.lock().await.remove(&room_id_clone);
-                crate::admin::delete_admin_redis(&state_clone, &room_id_clone).await;
                 crate::admin::persist_state(&state_clone).await;
                 let mut cleanup_lock = cleanup_clone.lock().await;
                 if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
@@ -296,7 +295,6 @@ async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
                         if removed {
                             times_retry.lock().await.remove(&rid_retry);
                             admin_retry.lock().await.remove(&rid_retry);
-                            crate::admin::delete_admin_redis(&state_retry, &rid_retry).await;
                             crate::admin::persist_state(&state_retry).await;
                             let mut cl = cleanup_retry.lock().await;
                             if cl.get(&rid_retry).copied() == Some(next_gen) {
@@ -761,7 +759,6 @@ pub(crate) async fn handle_socket(
                                 // channels. Checked before the channel entry
                                 // is materialized by the insert below.
                                 if !channel_preexists && channel_id != "General" {
-                                    crate::admin::load_admin_redis(&state, &room_id).await;
                                     let blocked = {
                                         let lock = state.admin_rooms.lock().await;
                                         match lock.get(&room_id) {
@@ -829,7 +826,6 @@ pub(crate) async fn handle_socket(
                                 // held seat (their browser may have lost
                                 // the resume token, e.g. a fresh tab).
                                 let key_ok_pre = if seat_held || occupied_remote_ids.contains(&user_id) {
-                                    crate::admin::load_admin_redis(&state, &room_id).await;
                                     let lock = state.admin_rooms.lock().await;
                                     lock.get(&room_id)
                                         .and_then(|a| {
@@ -866,7 +862,6 @@ pub(crate) async fn handle_socket(
                                 }
 
                                 // ---- Admin gate: creator creation, bans, lobby ----
-                                crate::admin::load_admin_redis(&state, &room_id).await;
                                 {
                                     let mut admins_lock = state.admin_rooms.lock().await;
                                     let admin_state =
@@ -2239,6 +2234,18 @@ pub(crate) async fn handle_socket(
                                             }
                                         }
                                         None => {
+                                            {
+                                                let mut lock = state.admin_rooms.lock().await;
+                                                if let Some(a) = lock.get_mut(&room_id) {
+                                                    for list in a.remote_pending.values_mut() {
+                                                        list.retain(|item| {
+                                                            item.get("id")
+                                                                .and_then(|v| v.as_str())
+                                                                != Some(target.as_str())
+                                                        });
+                                                    }
+                                                }
+                                            }
                                             distributed_broadcast(
                                                 &state,
                                                 &DistributedMessage {
@@ -2778,9 +2785,8 @@ pub(crate) async fn channel_status(
     drop(remote_lock);
     drop(rooms_lock);
 
-    // The room kind lives in the admin state; in distributed mode it may
-    // only exist in Redis until something materializes it on this node.
-    crate::admin::load_admin_redis(&state, &room_id).await;
+    // The room kind lives in the admin state (synchronized across P2P nodes
+    // via snapshots and live admin-update messages).
     let (kind, speakers) = {
         let lock = state.admin_rooms.lock().await;
         match lock.get(&room_id) {

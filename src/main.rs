@@ -1,13 +1,16 @@
 mod admin;
 mod distributed;
-mod redis_distributed;
+mod p2p_distributed;
 mod rooms;
 mod routes;
 mod state;
 mod web_assets;
 
 use axum::{Router, routing::get};
-use redis_distributed::{parse_redis_urls, spawn_redis_distributed};
+use p2p_distributed::{
+    P2pRuntime, cluster_ws_handler, derive_server_secret, load_p2p_config_from_env,
+    spawn_p2p_distributed,
+};
 use rooms::channel_status;
 use routes::*;
 use state::*;
@@ -20,9 +23,13 @@ use uuid::Uuid;
 use web_assets::*;
 #[tokio::main]
 async fn main() {
-    // Install the provider before any rediss:// connection initializes rustls.
-    // This is explicit because redis's rustls feature does not select one.
+    // Install the provider before any wss:// connection initializes rustls.
     let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(3000);
 
     let rooms: RoomMap = Arc::new(Mutex::new(HashMap::new()));
     let room_cleanup_generations: RoomCleanupMap = Arc::new(Mutex::new(HashMap::new()));
@@ -32,12 +39,7 @@ async fn main() {
         .ok()
         .map(|p| p.trim().to_string())
         .filter(|s| !s.is_empty());
-    let redis_urls = parse_redis_urls(std::env::var("REDIS_URL").ok().iter().map(String::as_str));
-    let redis_prefix = std::env::var("REDIS_PREFIX")
-        .ok()
-        .map(|prefix| prefix.trim().to_string())
-        .filter(|prefix| !prefix.is_empty())
-        .unwrap_or_else(|| "rustrooms".to_string());
+    let p2p_config = load_p2p_config_from_env(port);
     let allowed_url = std::env::var("URL")
         .ok()
         .and_then(|url| normalize_configured_host(&url));
@@ -46,10 +48,12 @@ async fn main() {
     let remote_users: RemoteUsersMap = Arc::new(Mutex::new(HashMap::new()));
     let remote_user_owners: RemoteUserOwnersMap = Arc::new(Mutex::new(HashMap::new()));
 
-    if !redis_urls.is_empty() {
+    if let Some(ref cfg) = p2p_config {
         println!(
-            "REDIS DISTRIBUTED: Enabled with {} Redis endpoint(s) (namespace: {redis_prefix})",
-            redis_urls.len()
+            "P2P DISTRIBUTED: Enabled (DHT: {}, static peers: {}, UDP port: {})",
+            cfg.dht_enabled,
+            cfg.peers.len(),
+            cfg.udp_port
         );
     }
 
@@ -61,11 +65,10 @@ async fn main() {
     }
 
     let node_id = Uuid::new_v4().to_string();
-    let distributed_mode = !redis_urls.is_empty();
 
-    // Shared signing secret. With RUSTROOMS_SERVER_SECRET set to the
-    // same value on every node, creator keys verify cluster-wide; the
-    // value itself is never used directly, its SHA-256 is the secret.
+    // Shared signing secret. With RUSTROOMS_SERVER_SECRET or KEY set to the
+    // same value on every node, creator keys and resume tokens verify
+    // cluster-wide without any central database.
     let env_secret: Option<Vec<u8>> = std::env::var("RUSTROOMS_SERVER_SECRET")
         .ok()
         .map(|v| v.trim().to_string())
@@ -73,33 +76,13 @@ async fn main() {
         .map(|v| {
             use sha2::Digest;
             sha2::Sha256::digest(v.as_bytes()).to_vec()
+        })
+        .or_else(|| {
+            p2p_config
+                .as_ref()
+                .map(|cfg| derive_server_secret(&cfg.cluster_key))
         });
-    if distributed_mode && env_secret.is_none() {
-        println!(
-            "ADMIN WARNING: distributed mode without RUSTROOMS_SERVER_SECRET; \
-             creator keys will only verify on the node that issued them"
-        );
-    }
 
-    // Direct Redis connection for admin-state loads at join time (the
-    // pub/sub bus has no request/response path).
-    let admin_redis = if distributed_mode {
-        match redis::Client::open(redis_urls[0].as_str()) {
-            Ok(client) => match client.get_multiplexed_async_connection().await {
-                Ok(conn) => Some(conn),
-                Err(e) => {
-                    eprintln!("ADMIN: Redis KV connection failed: {e}");
-                    None
-                }
-            },
-            Err(e) => {
-                eprintln!("ADMIN: Redis KV URL invalid: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
     let gen_secret = || -> Vec<u8> {
         [
             *Uuid::new_v4().as_bytes(),
@@ -117,16 +100,7 @@ async fn main() {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let (server_secret, admin_rooms, restored_room_ids, resume_records) = if distributed_mode {
-        // Redis is the shared source of truth; state materializes
-        // per room at join time, so there is nothing to restore.
-        (
-            Arc::new(env_secret.unwrap_or_else(gen_secret)),
-            Arc::new(Mutex::new(HashMap::new())),
-            Vec::new(),
-            Arc::new(Mutex::new(HashMap::new())),
-        )
-    } else {
+    let (server_secret, admin_rooms, restored_room_ids, resume_records) =
         match admin::load_persisted() {
             Some(p) if p.secret.len() >= 16 => {
                 let map: HashMap<String, RoomAdmin> = p
@@ -164,8 +138,10 @@ async fn main() {
                 Vec::new(),
                 Arc::new(Mutex::new(HashMap::new())),
             ),
-        }
-    };
+        };
+
+    let p2p_runtime = p2p_config.as_ref().map(P2pRuntime::new);
+    let cluster_key = p2p_config.as_ref().map(|c| c.cluster_key.clone());
 
     let state = AppState {
         rooms,
@@ -180,8 +156,8 @@ async fn main() {
         distributed_msg_history: Arc::new(Mutex::new(VecDeque::new())),
         node_id,
         admin_rooms,
-        admin_redis,
-        redis_prefix: redis_prefix.clone(),
+        cluster_key,
+        p2p_runtime: p2p_runtime.clone(),
         resume_records,
         away_seats: Arc::new(Mutex::new(HashMap::new())),
         departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
@@ -205,6 +181,7 @@ async fn main() {
         .route("/", get(index))
         .route("/new", get(new_room))
         .route("/new/", get(redirect_new_trailing_slash))
+        .route("/cluster-ws", get(cluster_ws_handler))
         .route("/{room_id}", get(index))
         .route("/{room_id}/", get(redirect_room_trailing_slash))
         .route("/{room_id}/{channel_id}", get(index))
@@ -241,11 +218,6 @@ async fn main() {
         )
         .with_state(state.clone());
 
-    let port = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(3000);
-
     let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -256,8 +228,8 @@ async fn main() {
     };
     println!("SERVER RUNNING ON PORT {}", port);
 
-    if !redis_urls.is_empty() {
-        spawn_redis_distributed(state.clone(), redis_urls, redis_prefix);
+    if let (Some(cfg), Some(runtime)) = (p2p_config, p2p_runtime) {
+        spawn_p2p_distributed(state.clone(), cfg, runtime);
     }
 
     axum::serve(listener, app).await.unwrap();

@@ -78,9 +78,9 @@ pub(crate) const CLIENT_WS_MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 pub(crate) const DISTRIBUTED_MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
 pub(crate) const OUTBOUND_QUEUE_CAPACITY: usize = 32;
 pub(crate) const DISTRIBUTED_BROADCAST_CAPACITY: usize = 256;
-// Redis heartbeats expire hard-crashed nodes so they do not leave ghost users.
-pub(crate) const REDIS_HEARTBEAT_SECS: u64 = 5;
-pub(crate) const REDIS_NODE_TIMEOUT_SECS: u64 = 30;
+// Peer heartbeats expire hard-crashed nodes so they do not leave ghost users.
+pub(crate) const DISTRIBUTED_HEARTBEAT_SECS: u64 = 5;
+pub(crate) const DISTRIBUTED_NODE_TIMEOUT_SECS: u64 = 30;
 pub(crate) const MESSAGE_RATE_WINDOW_SECS: u64 = 10;
 pub(crate) const MAX_MESSAGES_PER_RATE_WINDOW: u32 = 240;
 // Byte budget per rate window: bounds JSON parse work even for huge frames.
@@ -166,6 +166,8 @@ pub(crate) struct RoomAdmin {
     pub forced: HashMap<String, ForceFlags>,
     // Lobby: connections parked before join, and one-shot approvals.
     pub pending: HashMap<String, PendingKnock>,
+    // Remote nodes' pending lobby knocks keyed by source_node_id.
+    pub remote_pending: HashMap<String, Vec<serde_json::Value>>,
     pub approved: HashSet<String>,
 }
 
@@ -332,6 +334,7 @@ impl From<PersistedRoomAdmin> for RoomAdmin {
             audience: p.audience,
             forced: p.forced,
             pending: HashMap::new(),
+            remote_pending: HashMap::new(),
             approved: HashSet::new(),
         }
     }
@@ -367,16 +370,13 @@ pub(crate) struct AppState {
     pub distributed_msg_history: Arc<Mutex<VecDeque<String>>>,
     pub(crate) node_id: String,
     pub(crate) admin_rooms: AdminMap,
-    // Direct Redis connection for admin-state KV in distributed mode
-    // (the pub/sub bus has no request/response path). None = single
-    // node, where the state file is the persistence layer instead.
-    pub(crate) admin_redis: Option<redis::aio::MultiplexedConnection>,
-    pub(crate) redis_prefix: String,
+    pub(crate) cluster_key: Option<String>,
+    pub(crate) p2p_runtime: Option<Arc<crate::p2p_distributed::P2pRuntime>>,
     pub(crate) resume_records: ResumeMap,
     pub(crate) away_seats: AwayMap,
     pub(crate) departure_gen: Arc<std::sync::atomic::AtomicU64>,
-    // Random per boot; signs creator keys. Rooms are in-memory only,
-    // so a restart invalidating every key matches room lifetime.
+    // Signs creator keys and resume tokens. Derived from KEY in distributed
+    // mode (or RUSTROOMS_SERVER_SECRET) so credentials verify cluster-wide.
     pub(crate) server_secret: Arc<Vec<u8>>,
 }
 

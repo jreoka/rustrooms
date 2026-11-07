@@ -19,7 +19,7 @@ pub(crate) fn distributed_user_data(status: &UserStatus, created_at: u64) -> ser
     })
 }
 
-pub(crate) async fn process_redis_message(
+pub(crate) async fn process_distributed_message(
     message: DistributedMessage,
     source_node_id: &str,
     state: &AppState,
@@ -30,7 +30,14 @@ pub(crate) async fn process_redis_message(
     {
         return false;
     }
-    apply_distributed_message(&message, &state.rooms, &state.remote_users, state).await;
+    apply_distributed_message(
+        &message,
+        source_node_id,
+        &state.rooms,
+        &state.remote_users,
+        state,
+    )
+    .await;
     true
 }
 
@@ -200,11 +207,26 @@ pub(crate) async fn remove_remote_user_owner(
     ));
 }
 
-pub(crate) async fn cleanup_redis_node(state: &AppState, source_node_id: &str) -> HashSet<String> {
-    reconcile_redis_node(state, source_node_id, &HashSet::new()).await
+pub(crate) async fn cleanup_distributed_node(
+    state: &AppState,
+    source_node_id: &str,
+) -> HashSet<String> {
+    let mut rooms_with_knocks = Vec::new();
+    {
+        let mut admins = state.admin_rooms.lock().await;
+        for (room_id, admin) in admins.iter_mut() {
+            if admin.remote_pending.remove(source_node_id).is_some() {
+                rooms_with_knocks.push(room_id.clone());
+            }
+        }
+    }
+    for room_id in rooms_with_knocks {
+        crate::admin::notify_local_admins_knock_update(state, &room_id).await;
+    }
+    reconcile_distributed_node(state, source_node_id, &HashSet::new()).await
 }
 
-pub(crate) async fn reconcile_redis_node(
+pub(crate) async fn reconcile_distributed_node(
     state: &AppState,
     source_node_id: &str,
     retained: &HashSet<RemoteUserKey>,
@@ -363,7 +385,6 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
         if removed {
             state.channel_creation_times.lock().await.remove(&room_id);
             state.admin_rooms.lock().await.remove(&room_id);
-            crate::admin::delete_admin_redis(&state, &room_id).await;
             crate::admin::persist_state(&state).await;
             let mut generations = state.room_cleanup_generations.lock().await;
             if generations.get(&room_id).copied() == Some(generation) {
@@ -425,12 +446,13 @@ async fn handle_distributed_message(
     state: &AppState,
 ) {
     if remember_distributed_message(msg, state).await {
-        apply_distributed_message(msg, rooms, remote_users, state).await;
+        apply_distributed_message(msg, "", rooms, remote_users, state).await;
     }
 }
 
 async fn apply_distributed_message(
     msg: &DistributedMessage,
+    source_node_id: &str,
     rooms: &RoomMap,
     remote_users: &RemoteUsersMap,
     state: &AppState,
@@ -867,6 +889,7 @@ async fn apply_distributed_message(
                         .or_default()
                         .apply_public_state(data);
                 }
+                crate::admin::persist_state(state).await;
                 let mut client_data = data.clone();
                 if let Some(obj) = client_data.as_object_mut() {
                     obj.remove("keyHash");
@@ -891,27 +914,26 @@ async fn apply_distributed_message(
         }
         "knock-update" => {
             if let Some(ref data) = msg.data {
-                let admin_ids = {
-                    let lock = state.admin_rooms.lock().await;
-                    lock.get(&msg.room_id)
-                        .map(|a| a.admins.clone())
-                        .unwrap_or_default()
-                };
-                if !admin_ids.is_empty() {
-                    let text =
-                        crate::admin::signal_text("knock-update", None, Some(data.clone()));
-                    let rooms_lock = rooms.lock().await;
-                    if let Some(room) = rooms_lock.get(&msg.room_id) {
-                        for (_, channel) in room.iter() {
-                            for (uid, (tx, _)) in channel.iter() {
-                                if admin_ids.contains(uid) {
-                                    let _ =
-                                        tx.try_send(Ok(Message::Text(text.clone().into())));
-                                }
-                            }
-                        }
+                let remote_list = data
+                    .get("pending")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                {
+                    let mut lock = state.admin_rooms.lock().await;
+                    let admin = lock.entry(msg.room_id.clone()).or_default();
+                    let key = if source_node_id.is_empty() {
+                        "remote".to_string()
+                    } else {
+                        source_node_id.to_string()
+                    };
+                    if remote_list.is_empty() {
+                        admin.remote_pending.remove(&key);
+                    } else {
+                        admin.remote_pending.insert(key, remote_list);
                     }
                 }
+                crate::admin::notify_local_admins_knock_update(state, &msg.room_id).await;
             }
         }
         "mod-action" => {
@@ -1294,9 +1316,9 @@ mod tests {
             distributed_msg_history: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             node_id: Uuid::new_v4().to_string(),
             admin_rooms: Arc::new(Mutex::new(HashMap::new())),
-admin_redis: None,
-redis_prefix: "rustrooms".to_string(),
-resume_records: Arc::new(Mutex::new(HashMap::new())),
+            cluster_key: None,
+            p2p_runtime: None,
+            resume_records: Arc::new(Mutex::new(HashMap::new())),
 away_seats: Arc::new(Mutex::new(HashMap::new())),
 departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             server_secret: Arc::new(vec![7u8; 32]),
@@ -1336,7 +1358,7 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         let mut joined = test_distributed_message_typed("user-joined", "room", "General", &uid);
         joined.status = Some(test_user_status());
 
-        process_redis_message(joined, &owner, &state).await;
+        process_distributed_message(joined, &owner, &state).await;
 
         let key = ("room".to_string(), "General".to_string(), uid.clone());
         assert_eq!(
@@ -1364,10 +1386,10 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         let uid = Uuid::new_v4().to_string();
         let mut joined = test_distributed_message_typed("user-joined", "room", "General", &uid);
         joined.status = Some(test_user_status());
-        assert!(process_redis_message(joined, &owner, &state).await);
+        assert!(process_distributed_message(joined, &owner, &state).await);
 
         let left = test_distributed_message_typed("user-left", "room", "General", &uid);
-        assert!(!process_redis_message(left, &stale_node, &state).await);
+        assert!(!process_distributed_message(left, &stale_node, &state).await);
 
         let key = ("room".to_string(), "General".to_string(), uid.clone());
         assert_eq!(
@@ -1420,10 +1442,10 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         for (owner, uid) in [(&dead_owner, &dead_uid), (&live_owner, &live_uid)] {
             let mut joined = test_distributed_message_typed("user-joined", "room", "General", uid);
             joined.status = Some(test_user_status());
-            process_redis_message(joined, owner, &state).await;
+            process_distributed_message(joined, owner, &state).await;
         }
 
-        let affected = cleanup_redis_node(&state, &dead_owner).await;
+        let affected = cleanup_distributed_node(&state, &dead_owner).await;
         let remote = state.remote_users.lock().await;
         let users = remote.get("room").unwrap().get("General").unwrap();
         assert!(!users.contains_key(&dead_uid));
@@ -1450,7 +1472,7 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             .or_default()
             .insert(uid, test_user_status());
 
-        let affected = cleanup_redis_node(&state, &owner).await;
+        let affected = cleanup_distributed_node(&state, &owner).await;
 
         assert!(state.remote_users.lock().await.get("room").is_none());
         assert!(affected.contains("room"));
@@ -1466,7 +1488,7 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         for uid in [&retained_uid, &stale_uid] {
             let mut joined = test_distributed_message_typed("user-joined", "room", "General", uid);
             joined.status = Some(test_user_status());
-            process_redis_message(joined, &owner, &state).await;
+            process_distributed_message(joined, &owner, &state).await;
         }
 
         let retained = HashSet::from([(
@@ -1474,7 +1496,7 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             "General".to_string(),
             retained_uid.clone(),
         )]);
-        reconcile_redis_node(&state, &owner, &retained).await;
+        reconcile_distributed_node(&state, &owner, &retained).await;
 
         let remote = state.remote_users.lock().await;
         let users = remote.get("room").unwrap().get("General").unwrap();
