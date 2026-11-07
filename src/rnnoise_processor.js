@@ -56,6 +56,9 @@ class RnnoiseProcessor extends AudioWorkletProcessor {
             for (let i = 0; i < inputData.length; i++) {
                 this.inputQueue.push(inputData[i]);
             }
+            if (this.inputQueue.length > this.frameSize * 5) {
+                this.inputQueue.splice(0, this.inputQueue.length - this.frameSize);
+            }
 
             while (this.inputQueue.length >= this.frameSize) {
                 const frame = new Float32Array(this.inputQueue.splice(0, this.frameSize));

@@ -461,6 +461,7 @@
             }
         }
 
+        let currentNameModalKeyHandler = null;
         function showNameModal(title, placeholder, callback) {
             const modal = document.getElementById('nameModal');
             const modalTitle = document.getElementById('modalTitle');
@@ -473,22 +474,31 @@
             modal.classList.add('open');
             setTimeout(() => modalInput.focus(), 100);
 
+            if (currentNameModalKeyHandler) {
+                modalInput.removeEventListener('keydown', currentNameModalKeyHandler);
+                currentNameModalKeyHandler = null;
+            }
+
             modalSubmit.onclick = () => {
                 const name = modalInput.value.trim();
                 callback(name);
                 closeNameModal();
             };
 
-            const handleEnter = (e) => {
+            currentNameModalKeyHandler = (e) => {
                 if (e.key === 'Enter') {
                     modalSubmit.click();
-                    modalInput.removeEventListener('keydown', handleEnter);
                 }
             };
-            modalInput.addEventListener('keydown', handleEnter);
+            modalInput.addEventListener('keydown', currentNameModalKeyHandler);
         }
 
         function closeNameModal() {
+            const modalInput = document.getElementById('modalInput');
+            if (modalInput && currentNameModalKeyHandler) {
+                modalInput.removeEventListener('keydown', currentNameModalKeyHandler);
+                currentNameModalKeyHandler = null;
+            }
             animateModalClose('nameModal');
         }
 
@@ -824,6 +834,8 @@
                 }
 
                 const modalPairs = [
+                    ['alertModal', closeCustomAlert],
+                    ['createRoomModal', closeCreateRoomMenu],
                     ['nameModal', closeNameModal],
                     ['passwordModal', closePasswordModal],
                     ['confirmModal', closeCustomConfirm],
@@ -832,7 +844,7 @@
                 ];
                 for (const [id, closer] of modalPairs) {
                     const el = document.getElementById(id);
-                    if (el && el.classList.contains('open')) {
+                    if (el && (id === 'cropModal' ? !el.classList.contains('hidden') : el.classList.contains('open'))) {
                         closer();
                         return;
                     }
@@ -976,64 +988,78 @@
             });
         }
 
+        let isSwitchingChannel = false;
         async function performChannelSwitch(newRoomId, newChannelId) {
-            newChannelId = newChannelId.trim();
-            if (newChannelId && newChannelId.toLowerCase() === 'general') {
-                newChannelId = 'General';
+            if (isSwitchingChannel) return;
+            isSwitchingChannel = true;
+            try {
+                newChannelId = newChannelId.trim();
+                if (newChannelId && newChannelId.toLowerCase() === 'general') {
+                    newChannelId = 'General';
+                }
+                if ([...newChannelId].length > 32) {
+                    newChannelId = [...newChannelId].slice(0, 32).join('');
+                }
+                if (!newChannelId || newChannelId === '.' || newChannelId === '..') {
+                    showCustomAlert("Invalid Name", "Please choose a valid channel name.");
+                    return;
+                }
+
+                if (ws) {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        try { ws.send(JSON.stringify({ type: 'expedite-departure' })); } catch (e) {}
+                    }
+                    ws.onclose = null;
+                    ws.onerror = null;
+                    ws.close();
+
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+                stopHeartbeat();
+
+                for (const userId in peers) {
+                    removePeer(userId);
+                }
+                peers = {};
+                peerCamStatus = {};
+                peerScreenStatus = {};
+                peerScreenHasAudio = {};
+                peerMicTrackId = {};
+                peerScreenAudioTrackId = {};
+                peerCamVideoTrackId = {};
+                peerScreenVideoTrackId = {};
+                peerLowBandwidthStatus = {};
+                pendingCandidates = {};
+                remoteGrid.innerHTML = '';
+
+                roomId = newRoomId;
+                channelId = newChannelId;
+                sessionStorage.setItem('rustrooms_last_room_id', roomId);
+                sessionStorage.setItem('rustrooms_last_channel_id', channelId);
+
+                const channelNameEl = document.getElementById('currentChannelName');
+                if (channelNameEl) {
+                    channelNameEl.innerText = `# ${channelId}`;
+                }
+                if (typeof updatePageTitle === 'function') updatePageTitle();
+
+                const newUrl = `/${encodeURIComponent(roomId)}${channelId && channelId.toLowerCase() !== 'general' ? '/' + encodeURIComponent(channelId) : ''}`;
+                if (window.location.pathname !== newUrl) {
+                    history.pushState({ roomId, channelId }, "", newUrl);
+                }
+
+                wsUrl = `${wsProtocol}//${window.location.host}/ws/${encodeURIComponent(roomId)}/${encodeURIComponent(channelId)}`;
+                updateStatus('connecting', 'Connecting...');
+
+                if (typeof updateRoomListUI === 'function') updateRoomListUI();
+
+                reconnectionAttempts = 0;
+                isReconnecting = false;
+                connectWs();
+                recordRecentCall();
+            } finally {
+                isSwitchingChannel = false;
             }
-            if ([...newChannelId].length > 32) {
-                newChannelId = [...newChannelId].slice(0, 32).join('');
-            }
-            if (!newChannelId || newChannelId === '.' || newChannelId === '..') {
-                showCustomAlert("Invalid Name", "Please choose a valid channel name.");
-                return;
-            }
-
-            if (ws) {
-                ws.onclose = null;
-                ws.onerror = null;
-                ws.close();
-
-                await new Promise(resolve => setTimeout(resolve, 200));
-            }
-            stopHeartbeat();
-
-            for (const userId in peers) {
-                removePeer(userId);
-            }
-            peers = {};
-            peerCamStatus = {};
-            peerScreenStatus = {};
-            peerScreenHasAudio = {};
-            peerMicTrackId = {};
-            peerScreenAudioTrackId = {};
-            remoteGrid.innerHTML = '';
-
-            roomId = newRoomId;
-            channelId = newChannelId;
-            sessionStorage.setItem('rustrooms_last_room_id', roomId);
-            sessionStorage.setItem('rustrooms_last_channel_id', channelId);
-
-            const channelNameEl = document.getElementById('currentChannelName');
-            if (channelNameEl) {
-                channelNameEl.innerText = `# ${channelId}`;
-            }
-            if (typeof updatePageTitle === 'function') updatePageTitle();
-
-            const newUrl = `/${encodeURIComponent(roomId)}${channelId && channelId.toLowerCase() !== 'general' ? '/' + encodeURIComponent(channelId) : ''}`;
-            if (window.location.pathname !== newUrl) {
-                history.pushState({ roomId, channelId }, "", newUrl);
-            }
-
-            wsUrl = `${wsProtocol}//${window.location.host}/ws/${encodeURIComponent(roomId)}/${encodeURIComponent(channelId)}`;
-            updateStatus('connecting', 'Connecting...');
-
-            if (typeof updateRoomListUI === 'function') updateRoomListUI();
-
-            reconnectionAttempts = 0;
-            isReconnecting = false;
-            connectWs();
-            recordRecentCall();
         }
 
         function switchChannel(newChannelId) {
@@ -1367,7 +1393,11 @@
                     setTimeout(() => input.focus(), 100);
                 } else if (res.ok) {
                     sessionStorage.setItem('rustrooms_welcomed', 'true');
-                    window.location.href = `/${crypto.randomUUID()}`;
+                    if (res.redirected && res.url) {
+                        window.location.href = res.url;
+                    } else {
+                        window.location.href = `/${crypto.randomUUID()}`;
+                    }
                 } else {
                     showCustomAlert("Error", "Error creating room");
                 }
@@ -1388,7 +1418,11 @@
                 const res = await fetch('/new?password=' + encodeURIComponent(password));
                  if (res.ok) {
                      sessionStorage.setItem('rustrooms_welcomed', 'true');
-                     window.location.href = `/${crypto.randomUUID()}`;
+                     if (res.redirected && res.url) {
+                         window.location.href = res.url;
+                     } else {
+                         window.location.href = `/${crypto.randomUUID()}`;
+                     }
                  } else if (res.status === 401) {
                      sessionStorage.removeItem('rustrooms_room_password');
                      input.classList.add('ring-2', 'ring-red-500', 'border-red-500', 'shake-x');
@@ -1567,7 +1601,8 @@
             const speakerTestButtons = document.querySelectorAll('.btn-icon-test');
 
             [btnPreviewMic, btnPreviewCam].forEach(btn => {
-                if (btn) {
+                if (btn && !btn.dataset.touchInit) {
+                    btn.dataset.touchInit = '1';
                     btn.addEventListener('touchstart', function() {
                         this.classList.add('is-pressed');
                     }, { passive: true });
@@ -1581,15 +1616,18 @@
             });
 
             speakerTestButtons.forEach(btn => {
-                btn.addEventListener('touchstart', function() {
-                    this.classList.add('is-pressed');
-                }, { passive: true });
-                btn.addEventListener('touchend', function() {
-                    this.classList.remove('is-pressed');
-                }, { passive: true });
-                btn.addEventListener('touchcancel', function() {
-                    this.classList.remove('is-pressed');
-                }, { passive: true });
+                if (btn && !btn.dataset.touchInit) {
+                    btn.dataset.touchInit = '1';
+                    btn.addEventListener('touchstart', function() {
+                        this.classList.add('is-pressed');
+                    }, { passive: true });
+                    btn.addEventListener('touchend', function() {
+                        this.classList.remove('is-pressed');
+                    }, { passive: true });
+                    btn.addEventListener('touchcancel', function() {
+                        this.classList.remove('is-pressed');
+                    }, { passive: true });
+                }
             });
         }
 

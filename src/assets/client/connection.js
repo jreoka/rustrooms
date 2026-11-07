@@ -137,7 +137,9 @@
                                     if (msg.data && msg.data.resumeToken) {
                                         storeResumeToken(msg.data.resumeToken);
                                     }
+                                    lastJoinWasResumed = !!(msg.data && msg.data.resumed);
                                     hideKnockWaiting();
+                                    try { sessionStorage.removeItem('rustrooms_create_opts'); } catch (e) {}
                                     break;
                                 case 'admin-key':
                                     if (msg.data && msg.data.key) storeAdminKey(msg.data.key);
@@ -286,7 +288,20 @@
                                                 if (peers[user.id]) {
                                                     updatePeerInfo(user.id, user.status.nickname, user.status.avatar, user.status.isMuted, user.status.isDeafened, user.status.isGif, user.status.staticFrame);
                                                 } else {
-                                                    initPeer(user.id, false, user.status.nickname, user.status.avatar, user.status.isMuted, user.status.isDeafened, user.status.isGif, user.status.staticFrame);
+                                                    const isResumedSelf = lastJoinWasResumed;
+                                                    initPeer(user.id, isResumedSelf, user.status.nickname, user.status.avatar, user.status.isMuted, user.status.isDeafened, user.status.isGif, user.status.staticFrame);
+                                                    if (isResumedSelf) {
+                                                        const audioTrack = localStream && localStream.getAudioTracks()[0];
+                                                        const isMuted = !audioTrack || !audioTrack.enabled;
+                                                        sendSignal(user.id, 'identify', {
+                                                            nickname: userNickname,
+                                                            avatar: userAvatar,
+                                                            isMuted: isMuted,
+                                                            isDeafened: isDeafened,
+                                                            isGif: userAvatarIsGif,
+                                                            staticFrame: userAvatarStaticFrame
+                                                        });
+                                                    }
                                                 }
                                             });
                                             updateAllSenderBitrates();
@@ -1185,6 +1200,8 @@
             if (!peers[userId] || peers[userId] !== pc) return; // peer was removed
             if (pc.connectionState === 'closed' || pc.connectionState === 'failed') return; // peer is dead
             const options = isIceRestart ? { iceRestart: true } : {};
+            const isFresh = !pc._hasNegotiatedOnce;
+            pc._hasNegotiatedOnce = true;
             pc.createOffer(options)
                 .then(offer => {
                     if (!peers[userId] || peers[userId] !== pc) return; // peer was removed during async op
@@ -1193,7 +1210,7 @@
                 })
                 .then(() => {
                     if (!peers[userId] || peers[userId] !== pc) return; // peer was removed during async op
-                    sendSignal(userId, { type: 'offer', sdp: pc.localDescription });
+                    sendSignal(userId, { type: 'offer', sdp: pc.localDescription, freshPeer: isFresh });
                 })
                 .catch(e => console.error("Negotiation error", e));
         }
@@ -1430,7 +1447,7 @@
                  pc.addTransceiver('video', { direction: 'recvonly' });
             }
 
-            if (!localStream || localStream.getAudioTracks().length === 0 || isDeafened) {
+            if (!localStream || localStream.getAudioTracks().length === 0) {
                  pc.addTransceiver('audio', { direction: 'recvonly' });
             }
 
@@ -1540,7 +1557,6 @@
                             volControls.appendChild(row);
                         }
 
-                        (async () => { await setupAudioMonitor(screenStream, `wrapper-${userId}`); })();
                         event.track.onended = () => {
                             const row = document.getElementById(`vol-row-screen-${userId}`);
                             if (row) row.remove();
@@ -1590,8 +1606,6 @@
                             `;
                             volControls.appendChild(row);
                         }
-
-                        (async () => { await setupAudioMonitor(screenStream, `wrapper-${userId}`); })();
 
                         event.track.onended = () => {
                             screenAud.remove();
@@ -1705,13 +1719,25 @@
         }
 
         async function handleSignal(userId, data) {
+            if (data.type === 'offer' && data.freshPeer && peers[userId] && peers[userId].remoteDescription) {
+                removePeer(userId);
+            }
             if (!peers[userId]) initPeer(userId, false, undefined, null);
             const pc = peers[userId];
             if (!pc || pc.connectionState === 'closed' || pc.connectionState === 'failed') return; // peer is dead
 
             try {
                 if (data.type === 'offer') {
-                    if (pc.signalingState !== 'stable' && pc.signalingState !== 'have-local-offer') {
+                    const isPolite = persistentUserId < userId;
+                    const offerCollision = pc.signalingState === 'have-local-offer';
+                    if (offerCollision) {
+                        if (!isPolite) {
+                            console.warn(`Ignoring colliding offer from ${userId.substr(0,4)} (impolite)`);
+                            return;
+                        }
+                        await pc.setLocalDescription({ type: 'rollback' });
+                    }
+                    if (pc.signalingState !== 'stable') {
                         console.warn(`Ignoring offer from ${userId.substr(0,4)} in state ${pc.signalingState}`);
                         return;
                     }
@@ -1990,9 +2016,9 @@
                 delete peerScreenStatus[userId];
                 delete peerScreenHasAudio[userId];
             });
-            cleanupAudioMonitor('localWrapper');
-            stopGifFrameAnimation('localWrapper');
-            stopGifFrameAnimation('localWrapper-sidebar');
+            cleanupAudioMonitor('local');
+            stopGifFrameAnimation('local');
+            stopGifFrameAnimation('local-sidebar');
             userAvatarCache = {};
             recentCallPeers = {};
             globalRoomList = {};
@@ -2089,6 +2115,8 @@
 
         function toggleMic() {
             if (!localStream) return;
+            if (myForceFlags && myForceFlags.muted) return;
+            if (typeof roomAdminState !== 'undefined' && roomAdminState && roomAdminState.kind === 'stage' && typeof canSpeakId === 'function' && !canSpeakId(persistentUserId)) return;
             const tracks = localStream.getAudioTracks();
             if (tracks.length > 0) {
                 const track = tracks[0];
@@ -2135,12 +2163,14 @@
                             }
                         } else {
                             let attachedToNullSender = false;
-                            for (const sender of senders) {
-                                if (!sender.track || sender.track === null) {
-                                    sender.replaceTrack(track).catch(() => {});
-                                    if (sender.transceiver && (sender.transceiver.direction === 'recvonly' || sender.transceiver.direction === 'inactive')) {
-                                        sender.transceiver.direction = 'sendrecv';
+                            const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+                            for (const t of transceivers) {
+                                if (t.sender && !t.sender.track && t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') {
+                                    t.sender.replaceTrack(track).catch(() => {});
+                                    if (t.direction === 'recvonly' || t.direction === 'inactive') {
+                                        t.direction = 'sendrecv';
                                     }
+                                    pc._micAudioSender = t.sender;
                                     attachedToNullSender = true;
                                     break;
                                 }
@@ -2172,6 +2202,7 @@
         }
 
         function toggleDeafen() {
+            if (isDeafened && myForceFlags && myForceFlags.deafened) return;
             isDeafened = !isDeafened;
             const btn = document.getElementById('btnDeafen');
             const btnMic = document.getElementById('btnMic');
@@ -2254,9 +2285,14 @@
                             }
                         } else {
                             let nullSenderFound = false;
-                            for (const s of senders) {
-                                if (!s.track || s.track === null) {
-                                    s.replaceTrack(micAudioTrack).catch(() => {});
+                            const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+                            for (const t of transceivers) {
+                                if (t.sender && !t.sender.track && t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') {
+                                    t.sender.replaceTrack(micAudioTrack).catch(() => {});
+                                    if (t.direction === 'recvonly' || t.direction === 'inactive') {
+                                        t.direction = 'sendrecv';
+                                    }
+                                    pc._micAudioSender = t.sender;
                                     nullSenderFound = true;
                                     changed = true;
                                     break;
@@ -2307,6 +2343,13 @@
 
             const btn = document.getElementById('btnCam');
             if (!localStream) return;
+
+            let tracks = localStream.getVideoTracks();
+            const willEnable = tracks.length === 0 || !tracks[0].enabled;
+            if (willEnable) {
+                if (myForceFlags && myForceFlags.camOff) return;
+                if (typeof roomAdminState !== 'undefined' && roomAdminState && roomAdminState.kind === 'stage' && typeof canSpeakId === 'function' && !canSpeakId(persistentUserId)) return;
+            }
 
             camToggleInProgress = true;
             isCameraReady = false;
@@ -2584,6 +2627,13 @@
 
                 updateLocalMediaLayout();
                 savePreferences();
+
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'cam-toggle',
+                        data: { enabled: true, camVideoTrackId: newTrack.id }
+                    }));
+                }
             } catch (e) {
                 console.error("Camera switch failed", e);
             } finally {
@@ -2619,6 +2669,11 @@
             if (isMobileDevice()) {
                 showCustomAlert("Screen sharing", "Screen sharing is not supported on mobile devices.");
                 return;
+            }
+
+            if (!screenStream) {
+                if (myForceFlags && myForceFlags.screenOff) return;
+                if (typeof roomAdminState !== 'undefined' && roomAdminState && roomAdminState.kind === 'stage' && typeof canSpeakId === 'function' && !canSpeakId(persistentUserId)) return;
             }
 
             const btn = document.getElementById('btnShare');

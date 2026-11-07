@@ -176,147 +176,7 @@ pub(crate) async fn finalize_held_seat(
 // Schedules the delayed deletion of a room that just became empty
 // (shared by the disconnect path and held-seat finalization).
 async fn on_room_maybe_empty(state: &AppState, room_id: &str) {
-        let next_generation = {
-            let mut cleanup_lock = state.room_cleanup_generations.lock().await;
-            let next = cleanup_lock.get(room_id).copied().unwrap_or(0) + 1;
-            cleanup_lock.insert(room_id.to_string(), next);
-            next
-        };
-        println!(
-            "CLEANUP: Room '{}' became empty; scheduling deletion in {}s (generation {})",
-            room_id, ROOM_EMPTY_GRACE_SECS, next_generation
-        );
-
-        let rooms_clone = state.rooms.clone();
-        let cleanup_clone = state.room_cleanup_generations.clone();
-        let remote_users_clone = state.remote_users.clone();
-        let admin_clone = state.admin_rooms.clone();
-        let state_clone = state.clone();
-        let room_id_clone = room_id.to_string();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS)).await;
-
-            let generation_still_current = cleanup_clone
-                .lock()
-                .await
-                .get(&room_id_clone)
-                .copied()
-                .map(|g| g == next_generation)
-                .unwrap_or(false);
-            if !generation_still_current {
-                return;
-            }
-
-            let removed_room = {
-                let has_remote = remote_users_clone
-                    .lock()
-                    .await
-                    .get(&room_id_clone)
-                    .map(|r| r.values().any(|c| !c.is_empty()))
-                    .unwrap_or(false);
-                let has_pending_knocks = admin_clone
-                    .lock()
-                    .await
-                    .get(&room_id_clone)
-                    .is_some_and(|a| {
-                        !a.pending.is_empty()
-                            || a.remote_pending.values().any(|list| !list.is_empty())
-                    });
-                if has_remote || has_pending_knocks {
-                    false
-                } else {
-                    let mut rooms_lock = rooms_clone.lock().await;
-                    let should_remove_room = rooms_lock
-                        .get(&room_id_clone)
-                        .is_none_or(|room| room.values().all(|c| c.is_empty()));
-                    if should_remove_room {
-                        rooms_lock.remove(&room_id_clone);
-                        true
-                    } else {
-                        false
-                    }
-                }
-            };
-
-            if removed_room {
-                crate::distributed::purge_room_state(&state_clone, &room_id_clone).await;
-                let mut cleanup_lock = cleanup_clone.lock().await;
-                if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
-                    cleanup_lock.remove(&room_id_clone);
-                }
-                println!(
-                    "CLEANUP: Removed empty room '{}' after {}s empty",
-                    room_id_clone, ROOM_EMPTY_GRACE_SECS
-                );
-            } else {
-                // Room still has remote users or became non-empty; reschedule cleanup.
-                let mut cleanup_lock = cleanup_clone.lock().await;
-                if cleanup_lock.get(&room_id_clone).copied() == Some(next_generation) {
-                    let next_gen = next_generation + 1;
-                    cleanup_lock.insert(room_id_clone.clone(), next_gen);
-                    let rooms_retry = rooms_clone.clone();
-                    let cleanup_retry = cleanup_clone.clone();
-                    let remote_retry = remote_users_clone.clone();
-                    let admin_retry = admin_clone.clone();
-                    let state_retry = state_clone.clone();
-                    let rid_retry = room_id_clone.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(ROOM_EMPTY_GRACE_SECS))
-                            .await;
-                        let gen_current =
-                            cleanup_retry.lock().await.get(&rid_retry).copied() == Some(next_gen);
-                        if !gen_current {
-                            return;
-                        }
-                        let has_remote = remote_retry
-                            .lock()
-                            .await
-                            .get(&rid_retry)
-                            .map(|r| r.values().any(|c| !c.is_empty()))
-                            .unwrap_or(false);
-                        let has_pending_knocks = admin_retry
-                            .lock()
-                            .await
-                            .get(&rid_retry)
-                            .is_some_and(|a| {
-                                !a.pending.is_empty()
-                                    || a.remote_pending.values().any(|list| !list.is_empty())
-                            });
-                        if has_remote || has_pending_knocks {
-                            // Still has remote users or pending knocks, clear generation so future activity can re-trigger.
-                            let mut cl = cleanup_retry.lock().await;
-                            if cl.get(&rid_retry).copied() == Some(next_gen) {
-                                cl.remove(&rid_retry);
-                            }
-                            return;
-                        }
-                        let removed = {
-                            let mut rl = rooms_retry.lock().await;
-                            let should = rl
-                                .get(&rid_retry)
-                                .is_none_or(|rm| rm.values().all(|c| c.is_empty()));
-                            if should {
-                                rl.remove(&rid_retry);
-                                true
-                            } else {
-                                false
-                            }
-                        };
-                        if removed {
-                            crate::distributed::purge_room_state(&state_retry, &rid_retry).await;
-                            let mut cl = cleanup_retry.lock().await;
-                            if cl.get(&rid_retry).copied() == Some(next_gen) {
-                                cl.remove(&rid_retry);
-                            }
-                            println!(
-                                "CLEANUP: Removed empty room '{}' after rescheduled check",
-                                rid_retry
-                            );
-                        }
-                    });
-                }
-            }
-        });
+    schedule_empty_room_cleanup(state, room_id).await;
 }
 
 pub(crate) async fn handle_socket(
@@ -429,7 +289,12 @@ pub(crate) async fn handle_socket(
         // Update last activity timestamp on any received message
         *last_activity_writer.lock().await = std::time::Instant::now();
         if let Ok(msg) = result {
-            if let Message::Text(text) = msg {
+            let msg_bytes = match &msg {
+                Message::Text(text) => Some(text.len()),
+                Message::Binary(bin) => Some(bin.len()),
+                _ => None,
+            };
+            if let Some(byte_len) = msg_bytes {
                 let now = std::time::Instant::now();
                 if now.duration_since(message_window_started)
                     >= std::time::Duration::from_secs(MESSAGE_RATE_WINDOW_SECS)
@@ -439,7 +304,7 @@ pub(crate) async fn handle_socket(
                     bytes_in_window = 0;
                 }
                 messages_in_window += 1;
-                bytes_in_window += text.len();
+                bytes_in_window += byte_len;
                 if messages_in_window > MAX_MESSAGES_PER_RATE_WINDOW
                     || bytes_in_window > MAX_BYTES_PER_RATE_WINDOW
                 {
@@ -449,7 +314,8 @@ pub(crate) async fn handle_socket(
                     }))));
                     break;
                 }
-
+            }
+            if let Message::Text(text) = msg {
                 if let Ok(parsed) = serde_json::from_str::<SignalMessage>(&text) {
                     if is_joined {
                         let is_current_connection = {
@@ -502,13 +368,28 @@ pub(crate) async fn handle_socket(
 
                     if !is_joined {
                         if parsed.msg_type == "join" {
-                            user_id = normalize_user_id(
-                                parsed
-                                    .data
-                                    .as_ref()
-                                    .and_then(|data| data.get("userId"))
-                                    .and_then(|value| value.as_str()),
-                            );
+                            // If this socket is already parked in the lobby, ignore
+                            // duplicate join messages until an admin has approved it.
+                            let mut pre_approved_knock = false;
+                            if is_pending_knock {
+                                let approved_now = {
+                                    let mut lock = state.admin_rooms.lock().await;
+                                    lock.get_mut(&room_id)
+                                        .is_some_and(|a| a.approved.remove(&user_id))
+                                };
+                                if !approved_now {
+                                    continue;
+                                }
+                                pre_approved_knock = true;
+                            } else {
+                                user_id = normalize_user_id(
+                                    parsed
+                                        .data
+                                        .as_ref()
+                                        .and_then(|data| data.get("userId"))
+                                        .and_then(|value| value.as_str()),
+                                );
+                            }
 
                             let nickname = parsed
                                 .data
@@ -563,13 +444,13 @@ pub(crate) async fn handle_socket(
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
 
-                            let cam_enabled = parsed
+                            let mut cam_enabled = parsed
                                 .data
                                 .as_ref()
                                 .and_then(|d| d.get("camEnabled"))
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            let screen_has_audio = parsed
+                            let mut screen_has_audio = parsed
                                 .data
                                 .as_ref()
                                 .and_then(|d| d.get("screenAudio"))
@@ -581,19 +462,19 @@ pub(crate) async fn handle_socket(
                                 .and_then(|d| d.get("micTrackId"))
                                 .and_then(|v| v.as_str())
                                 .filter(|value| value.len() <= 256);
-                            let screen_audio_track_id = parsed
+                            let mut screen_audio_track_id = parsed
                                 .data
                                 .as_ref()
                                 .and_then(|d| d.get("screenAudioTrackId"))
                                 .and_then(|v| v.as_str())
                                 .filter(|value| value.len() <= 256);
-                            let cam_video_track_id = parsed
+                            let mut cam_video_track_id = parsed
                                 .data
                                 .as_ref()
                                 .and_then(|d| d.get("camVideoTrackId"))
                                 .and_then(|v| v.as_str())
                                 .filter(|value| value.len() <= 256);
-                            let screen_video_track_id = parsed
+                            let mut screen_video_track_id = parsed
                                 .data
                                 .as_ref()
                                 .and_then(|d| d.get("screenVideoTrackId"))
@@ -680,7 +561,8 @@ pub(crate) async fn handle_socket(
                             let mut admin_state_changed = false;
                             {
                                 let room_needs_password = {
-                                    let exists_locally = rooms.lock().await.contains_key(&room_id);
+                                    let exists_locally = rooms.lock().await.contains_key(&room_id)
+                                        || state.admin_rooms.lock().await.contains_key(&room_id);
                                     let exists_remotely =
                                         remote_users.lock().await.contains_key(&room_id)
                                             || state
@@ -733,20 +615,26 @@ pub(crate) async fn handle_socket(
                                         })
                                         .unwrap_or(false)
                                 };
-                                let room_preexisting = remote_member
-                                    || rooms
-                                        .lock()
-                                        .await
-                                        .get(&room_id)
-                                        .map(|r| r.values().any(|c| !c.is_empty()))
-                                        .unwrap_or(false);
+                                let (local_member, room_preexisting, local_channel_preexists, seat_active_local, occupied_local_ids) = {
+                                    let rl = rooms.lock().await;
+                                    if let Some(room) = rl.get(&room_id) {
+                                        let lm = room.values().any(|c| c.contains_key(&user_id));
+                                        let rp = remote_member || room.values().any(|c| !c.is_empty());
+                                        let lcp = room.contains_key(&channel_id);
+                                        let sal = room
+                                            .get(&channel_id)
+                                            .is_some_and(|c| c.contains_key(&user_id));
+                                        let oli: HashSet<String> = room
+                                            .get(&channel_id)
+                                            .map(|c| c.keys().cloned().collect())
+                                            .unwrap_or_default();
+                                        (lm, rp, lcp, sal, oli)
+                                    } else {
+                                        (false, remote_member, false, false, HashSet::new())
+                                    }
+                                };
+                                let already_member = remote_member || local_member;
                                 let channel_preexists = {
-                                    let local = rooms
-                                        .lock()
-                                        .await
-                                        .get(&room_id)
-                                        .map(|r| r.contains_key(&channel_id))
-                                        .unwrap_or(false);
                                     let timed = state
                                         .channel_creation_times
                                         .lock()
@@ -760,7 +648,7 @@ pub(crate) async fn handle_socket(
                                         .get(&room_id)
                                         .map(|r| r.contains_key(&channel_id))
                                         .unwrap_or(false);
-                                    local || timed || remote
+                                    local_channel_preexists || timed || remote
                                 };
 
                                 // In a stage room only admins may create
@@ -800,26 +688,17 @@ pub(crate) async fn handle_socket(
                                     }
                                 }
 
-                                let mut rooms_lock = rooms.lock().await;
-
-                                let room = rooms_lock
-                                    .entry(room_id.clone())
-                                    .or_insert_with(HashMap::new);
-                                let already_member = remote_member
-                                    || room.values().any(|c| c.contains_key(&user_id));
-                                room.entry("General".to_string())
-                                    .or_insert_with(HashMap::new);
-                                let channel =
-                                    room.entry(channel_id.clone()).or_insert_with(HashMap::new);
-
                                 // Resume check: a live token for this
                                 // room+channel means this connection is
                                 // the same participant returning, not a
                                 // new identity to be suffixed.
-                                let seat_held = {
+                                let (seat_held, seat_held_other_channel) = {
                                     let lock = state.away_seats.lock().await;
-                                    lock.get(&(room_id.clone(), user_id.clone()))
-                                        .is_some_and(|m| m.channel_id == channel_id)
+                                    match lock.get(&(room_id.clone(), user_id.clone())) {
+                                        Some(m) if m.channel_id == channel_id => (true, false),
+                                        Some(_) => (false, true),
+                                        None => (false, false),
+                                    }
                                 };
                                 resume_ok = crate::admin::validate_resume_token(
                                     &state,
@@ -829,11 +708,23 @@ pub(crate) async fn handle_socket(
                                     resume_token.as_deref(),
                                 )
                                 .await;
+                                let room_resume_ok = resume_ok
+                                    || crate::admin::validate_room_resume_token(
+                                        &state,
+                                        &room_id,
+                                        &user_id,
+                                        &channel_id,
+                                        resume_token.as_deref(),
+                                    )
+                                    .await;
                                 // The creator key is also proof of
                                 // identity: its holder may reclaim a
                                 // held seat (their browser may have lost
                                 // the resume token, e.g. a fresh tab).
-                                let key_ok_pre = if seat_held || occupied_remote_ids.contains(&user_id) {
+                                let key_ok_pre = if seat_held
+                                    || seat_active_local
+                                    || occupied_remote_ids.contains(&user_id)
+                                {
                                     let lock = state.admin_rooms.lock().await;
                                     lock.get(&room_id)
                                         .and_then(|a| {
@@ -854,19 +745,32 @@ pub(crate) async fn handle_socket(
                                     false
                                 };
                                 let takeover = (resume_ok || key_ok_pre)
+                                    && (seat_held
+                                        || seat_active_local
+                                        || occupied_remote_ids.contains(&user_id));
+                                warm_resume = (resume_ok || key_ok_pre)
                                     && (seat_held || occupied_remote_ids.contains(&user_id));
-                                warm_resume = takeover;
                                 if takeover {
                                     state
                                         .away_seats
                                         .lock()
                                         .await
                                         .remove(&(room_id.clone(), user_id.clone()));
-                                } else {
+                                } else if !pre_approved_knock {
                                     user_id = unique_user_id(user_id, |candidate| {
-                                        channel.contains_key(candidate)
+                                        occupied_local_ids.contains(candidate)
                                             || occupied_remote_ids.contains(candidate)
                                     });
+                                } else if occupied_local_ids.contains(&user_id)
+                                    || occupied_remote_ids.contains(&user_id)
+                                {
+                                    user_id = unique_user_id(user_id, |candidate| {
+                                        occupied_local_ids.contains(candidate)
+                                            || occupied_remote_ids.contains(candidate)
+                                    });
+                                }
+                                if seat_held_other_channel && (already_member || room_resume_ok || key_ok_pre) {
+                                    finalize_held_seat(&state, &room_id, &user_id, None, true).await;
                                 }
 
                                 // ---- Admin gate: creator creation, bans, lobby ----
@@ -916,12 +820,18 @@ pub(crate) async fn handle_socket(
                                     if key_ok {
                                         // The creator is back: their current
                                         // identity becomes the creator id.
-                                        admin_state.creator_id = Some(user_id.clone());
+                                        if let Some(prev_creator) = admin_state.creator_id.replace(user_id.clone())
+                                            && prev_creator != user_id
+                                        {
+                                            admin_state.admins.remove(&prev_creator);
+                                        }
                                         admin_state.admins.insert(user_id.clone());
                                         admin_state_changed = true;
                                     }
                                     let bypass_lobby = key_ok
                                         || resume_ok
+                                        || room_resume_ok
+                                        || pre_approved_knock
                                         || admin_state.is_admin(&user_id)
                                         || already_member
                                         || admin_state.approved.remove(&user_id);
@@ -951,6 +861,14 @@ pub(crate) async fn handle_socket(
                                             .or_insert_with(current_unix_secs);
                                     }
 
+                                    let existing_status = {
+                                        let rl = rooms.lock().await;
+                                        rl.get(&room_id)
+                                            .and_then(|r| r.get(&channel_id))
+                                            .and_then(|c| c.get(&user_id))
+                                            .map(|(_, status)| status.clone())
+                                    };
+
                                     // If this identity already has a stored status in
                                     // the channel (a reconnect: the old socket's
                                     // death hasn't been noticed yet), the server's
@@ -974,7 +892,7 @@ pub(crate) async fn handle_socket(
                                         profile_rev,
                                     };
                                     joined_status = reconcile_join_status(
-                                        channel.get(&user_id).map(|(_, status)| status),
+                                        existing_status.as_ref(),
                                         client_status,
                                     );
 
@@ -985,6 +903,11 @@ pub(crate) async fn handle_socket(
                                             if a.kind == RoomKind::Stage && !a.can_speak(&user_id) {
                                                 status.is_muted = true;
                                                 status.is_screen_sharing = false;
+                                                cam_enabled = false;
+                                                cam_video_track_id = None;
+                                                screen_has_audio = false;
+                                                screen_video_track_id = None;
+                                                screen_audio_track_id = None;
                                             }
                                             if let Some(f) = a.forced.get(&user_id) {
                                                 if f.muted {
@@ -993,16 +916,39 @@ pub(crate) async fn handle_socket(
                                                 if f.deafened {
                                                     status.is_deafened = true;
                                                 }
+                                                if f.cam_off {
+                                                    cam_enabled = false;
+                                                    cam_video_track_id = None;
+                                                }
                                                 if f.share_off {
                                                     status.is_screen_sharing = false;
+                                                    screen_has_audio = false;
+                                                    screen_video_track_id = None;
+                                                    screen_audio_track_id = None;
                                                 }
                                             }
                                         }
                                         joined_status = status;
                                     }
 
-                                    channel
-                                        .insert(user_id.clone(), (tx.clone(), joined_status.clone()));
+                                    let mut rooms_lock = rooms.lock().await;
+                                    let room = rooms_lock
+                                        .entry(room_id.clone())
+                                        .or_insert_with(HashMap::new);
+                                    room.entry("General".to_string())
+                                        .or_insert_with(HashMap::new);
+                                    let channel =
+                                        room.entry(channel_id.clone()).or_insert_with(HashMap::new);
+                                    if let Some((old_tx, _)) = channel
+                                        .insert(user_id.clone(), (tx.clone(), joined_status.clone()))
+                                        && !old_tx.same_channel(&tx)
+                                    {
+                                        let _ = old_tx.try_send(Ok(Message::Close(Some(CloseFrame {
+                                            code: 4002,
+                                            reason: "User identity is active on another connection"
+                                                .into(),
+                                        }))));
+                                    }
                                 }
                             }
 
@@ -1287,6 +1233,19 @@ pub(crate) async fn handle_socket(
                                 last_profile_image_update = Some(now);
                             }
 
+                            let (stage_mute_clamp, forced_flags) = {
+                                let admins_lock = state.admin_rooms.lock().await;
+                                admins_lock
+                                    .get(&room_id)
+                                    .map(|a| {
+                                        (
+                                            a.kind == RoomKind::Stage && !a.can_speak(&user_id),
+                                            a.forced.get(&user_id).copied(),
+                                        )
+                                    })
+                                    .unwrap_or((false, None))
+                            };
+
                             let mut full_status = None;
                             {
                                 let mut rooms_lock = rooms.lock().await;
@@ -1374,26 +1333,19 @@ pub(crate) async fn handle_socket(
                                             }
                                             status.profile_rev = data_rev.max(status.profile_rev);
                                         }
-                                        {
-                                            let admins_lock = state.admin_rooms.lock().await;
-                                            if let Some(a) = admins_lock.get(&room_id) {
-                                                if a.kind == RoomKind::Stage
-                                                    && !a.can_speak(&user_id)
-                                                {
-                                                    status.is_muted = true;
-                                                    status.is_screen_sharing = false;
-                                                }
-                                                if let Some(f) = a.forced.get(&user_id) {
-                                                    if f.muted {
-                                                        status.is_muted = true;
-                                                    }
-                                                    if f.deafened {
-                                                        status.is_deafened = true;
-                                                    }
-                                                    if f.share_off {
-                                                        status.is_screen_sharing = false;
-                                                    }
-                                                }
+                                        if stage_mute_clamp {
+                                            status.is_muted = true;
+                                            status.is_screen_sharing = false;
+                                        }
+                                        if let Some(f) = forced_flags {
+                                            if f.muted {
+                                                status.is_muted = true;
+                                            }
+                                            if f.deafened {
+                                                status.is_deafened = true;
+                                            }
+                                            if f.share_off {
+                                                status.is_screen_sharing = false;
                                             }
                                         }
                                         // Only propagate when something actually changed,
@@ -1425,26 +1377,23 @@ pub(crate) async fn handle_socket(
                                             )));
                                         }
                                     }
-
-                                    if let Some(ref status) = full_status {
-                                        distributed_broadcast(
-                                            &state,
-                                            &DistributedMessage {
-                                                msg_type: "user-update".into(),
-                                                room_id: room_id.clone(),
-                                                channel_id: channel_id.clone(),
-                                                user_id: user_id.clone(),
-                                                msg_id: Uuid::new_v4().to_string(),
-                                                status: Some(status.clone()),
-                                                data: None,
-                                                signal_msg: None,
-                                            },
-                                        )
-                                        .await;
-                                    }
                                 }
                             }
-                            if full_status.is_some() {
+                            if let Some(ref status) = full_status {
+                                distributed_broadcast(
+                                    &state,
+                                    &DistributedMessage {
+                                        msg_type: "user-update".into(),
+                                        room_id: room_id.clone(),
+                                        channel_id: channel_id.clone(),
+                                        user_id: user_id.clone(),
+                                        msg_id: Uuid::new_v4().to_string(),
+                                        status: Some(status.clone()),
+                                        data: None,
+                                        signal_msg: None,
+                                    },
+                                )
+                                .await;
                                 broadcast_channel_list(
                                     &rooms,
                                     &remote_users,
@@ -1628,6 +1577,28 @@ pub(crate) async fn handle_socket(
                                         })),
                                     })
                                     .unwrap();
+                                    let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
+                                    continue;
+                                }
+
+                                let is_creator = {
+                                    let mut lock = state.admin_rooms.lock().await;
+                                    if let Some(a) = lock.get_mut(&room_id) {
+                                        if a.creator_id.as_deref() == Some(kick_uid.as_str()) {
+                                            true
+                                        } else {
+                                            a.approved.remove(&kick_uid);
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if is_creator {
+                                    let error_msg = crate::admin::error_text(
+                                        "CANNOT_BAN",
+                                        "The room creator cannot be kicked.",
+                                    );
                                     let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
                                     continue;
                                 }
@@ -1983,26 +1954,45 @@ pub(crate) async fn handle_socket(
                                 }
                                 "mute" | "unmute" | "deafen" | "undeafen" | "cam-off"
                                 | "cam-on" | "share-off" | "share-on" => {
+                                    let mut refusal = false;
                                     {
                                         let mut lock = state.admin_rooms.lock().await;
                                         if let Some(a) = lock.get_mut(&room_id) {
-                                            let flags =
-                                                a.forced.entry(target.clone()).or_default();
-                                            match action.as_str() {
-                                                "mute" => flags.muted = true,
-                                                "unmute" => flags.muted = false,
-                                                "deafen" => flags.deafened = true,
-                                                "undeafen" => flags.deafened = false,
-                                                "cam-off" => flags.cam_off = true,
-                                                "cam-on" => flags.cam_off = false,
-                                                "share-off" => flags.share_off = true,
-                                                "share-on" => flags.share_off = false,
-                                                _ => {}
-                                            }
-                                            if !flags.any() {
-                                                a.forced.remove(&target);
+                                            if target != user_id
+                                                && a.creator_id.as_deref() == Some(target.as_str())
+                                                && matches!(
+                                                    action.as_str(),
+                                                    "mute" | "deafen" | "cam-off" | "share-off"
+                                                )
+                                            {
+                                                refusal = true;
+                                            } else {
+                                                let flags =
+                                                    a.forced.entry(target.clone()).or_default();
+                                                match action.as_str() {
+                                                    "mute" => flags.muted = true,
+                                                    "unmute" => flags.muted = false,
+                                                    "deafen" => flags.deafened = true,
+                                                    "undeafen" => flags.deafened = false,
+                                                    "cam-off" => flags.cam_off = true,
+                                                    "cam-on" => flags.cam_off = false,
+                                                    "share-off" => flags.share_off = true,
+                                                    "share-on" => flags.share_off = false,
+                                                    _ => {}
+                                                }
+                                                if !flags.any() {
+                                                    a.forced.remove(&target);
+                                                }
                                             }
                                         }
+                                    }
+                                    if refusal {
+                                        let error_msg = crate::admin::error_text(
+                                            "CANNOT_DEMOTE_CREATOR",
+                                            "The room creator cannot be moderated.",
+                                        );
+                                        let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
+                                        continue;
                                     }
                                     // Immediately clamp stored status when an admin
                                     // imposes mute/deafen/share-off so held seats or
@@ -2198,15 +2188,6 @@ pub(crate) async fn handle_socket(
                                         let mut lock = state.admin_rooms.lock().await;
                                         if let Some(a) = lock.get_mut(&room_id) {
                                             a.banned.insert(target.clone());
-                                            state
-                                                .away_seats
-                                                .lock()
-                                                .await
-                                                .remove(&(room_id.clone(), target.clone()));
-                                            crate::admin::delete_resume_token(
-                                                &state, &room_id, &target,
-                                            )
-                                            .await;
                                             a.admins.remove(&target);
                                             a.speakers.remove(&target);
                                             a.audience.remove(&target);
@@ -2222,6 +2203,15 @@ pub(crate) async fn handle_socket(
                                             }
                                         }
                                     }
+                                    state
+                                        .away_seats
+                                        .lock()
+                                        .await
+                                        .remove(&(room_id.clone(), target.clone()));
+                                    crate::admin::delete_resume_token(
+                                        &state, &room_id, &target,
+                                    )
+                                    .await;
                                     if let Some(ptx) = pending_knock_tx {
                                         let msg =
                                             crate::admin::signal_text("knock-denied", None, None);
@@ -2315,16 +2305,6 @@ pub(crate) async fn handle_socket(
                                 }
                                 "move" => {
                                     let Some(dest) = move_channel else { continue };
-                                    // Pre-approve the landing join: the
-                                    // switch closes the old connection
-                                    // first, so without this a lobby room
-                                    // would make the moved user knock.
-                                    {
-                                        let mut lock = state.admin_rooms.lock().await;
-                                        if let Some(a) = lock.get_mut(&room_id) {
-                                            a.approved.insert(target.clone());
-                                        }
-                                    }
                                     let text = crate::admin::signal_text(
                                         "channel-moved",
                                         Some(target.clone()),
@@ -2333,6 +2313,7 @@ pub(crate) async fn handle_socket(
                                         })),
                                     );
                                     let mut found_local = false;
+                                    let mut moved_local = false;
                                     {
                                         let rooms_lock = rooms.lock().await;
                                         if let Some(room) = rooms_lock.get(&room_id) {
@@ -2342,6 +2323,7 @@ pub(crate) async fn handle_socket(
                                                 {
                                                     found_local = true;
                                                     if *ch != dest {
+                                                        moved_local = true;
                                                         let _ = target_tx.try_send(Ok(
                                                             Message::Text(text.clone().into()),
                                                         ));
@@ -2349,6 +2331,16 @@ pub(crate) async fn handle_socket(
                                                     break;
                                                 }
                                             }
+                                        }
+                                    }
+                                    if moved_local || !found_local {
+                                        // Pre-approve the landing join: the
+                                        // switch closes the old connection
+                                        // first, so without this a lobby room
+                                        // would make the moved user knock.
+                                        let mut lock = state.admin_rooms.lock().await;
+                                        if let Some(a) = lock.get_mut(&room_id) {
+                                            a.approved.insert(target.clone());
                                         }
                                     }
                                     if !found_local {
@@ -2375,10 +2367,10 @@ pub(crate) async fn handle_socket(
                                         let mut lock = state.admin_rooms.lock().await;
                                         lock.get_mut(&room_id).and_then(|a| {
                                             let removed = a.pending.remove(&target);
-                                            if approve && removed.is_some() {
+                                            if approve {
                                                 a.approved.insert(target.clone());
                                             }
-                                            if block && removed.is_some() {
+                                            if block {
                                                 // Blocking is a ban applied to a
                                                 // parked guest: the join path
                                                 // rejects banned identities before
@@ -2389,8 +2381,7 @@ pub(crate) async fn handle_socket(
                                             removed.map(|p| p.tx)
                                         })
                                     };
-                                    let was_local = pending_tx.is_some();
-                                    if block && was_local {
+                                    if block {
                                         crate::admin::delete_resume_token(
                                             &state, &room_id, &target,
                                         )
@@ -2457,16 +2448,32 @@ pub(crate) async fn handle_socket(
                                         }
                                     }
                                     crate::admin::send_knock_update(&state, &room_id).await;
-                                    if block && was_local {
+                                    if block {
                                         crate::admin::broadcast_admin_update(
                                             &state, &room_id,
                                         )
                                         .await;
                                     }
+                                    if !approve {
+                                        schedule_empty_room_cleanup(&state, &room_id).await;
+                                    }
                                 }
                                 _ => {}
                             }
                         } else if parsed.msg_type == "rename-channel" {
+                            let stage_blocked = {
+                                let lock = state.admin_rooms.lock().await;
+                                lock.get(&room_id)
+                                    .is_some_and(|a| a.kind == RoomKind::Stage && !a.is_admin(&user_id))
+                            };
+                            if stage_blocked {
+                                let error_msg = crate::admin::error_text(
+                                    "NOT_ADMIN",
+                                    "Only admins can rename channels in a stage room.",
+                                );
+                                let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
+                                continue;
+                            }
                             let mut target_channel_id = parsed
                                 .data
                                 .as_ref()
@@ -2624,6 +2631,19 @@ pub(crate) async fn handle_socket(
                                 }
                             }
                         } else if parsed.msg_type == "delete-channel" {
+                            let stage_blocked = {
+                                let lock = state.admin_rooms.lock().await;
+                                lock.get(&room_id)
+                                    .is_some_and(|a| a.kind == RoomKind::Stage && !a.is_admin(&user_id))
+                            };
+                            if stage_blocked {
+                                let error_msg = crate::admin::error_text(
+                                    "NOT_ADMIN",
+                                    "Only admins can delete channels in a stage room.",
+                                );
+                                let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
+                                continue;
+                            }
                             let mut target_channel_id = parsed
                                 .data
                                 .as_ref()
@@ -2685,6 +2705,9 @@ pub(crate) async fn handle_socket(
                                         let mut times = state.channel_creation_times.lock().await;
                                         if let Some(room_times) = times.get_mut(&room_id) {
                                             room_times.remove(&target_channel_id);
+                                            if room_times.is_empty() {
+                                                times.remove(&room_id);
+                                            }
                                         }
                                     }
                                     remove_remote_channel_owners(
@@ -2790,6 +2813,7 @@ pub(crate) async fn handle_socket(
         };
         if removed {
             crate::admin::send_knock_update(&state, &room_id).await;
+            schedule_empty_room_cleanup(&state, &room_id).await;
         }
     }
 

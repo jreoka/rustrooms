@@ -56,6 +56,7 @@
         let localStream;
         let screenStream;
         let peers = {};
+        let lastJoinWasResumed = false;
         let peerCamStatus = {};
         let peerScreenStatus = {};
         let peerScreenHasAudio = {};
@@ -193,7 +194,10 @@
                                 params.encodings[0].maxBitrate = isScreen ? 150000 : 80000;
                                 params.encodings[0].scaleResolutionDownBy = isScreen ? 1.5 : 2.0;
                             } else if (track.kind === 'audio') {
-                                params.encodings[0].maxBitrate = 16000;
+                                const isScreenAudio = (screenStream && screenStream.getAudioTracks().includes(track)) || track.contentHint === 'music';
+                                if (!isScreenAudio) {
+                                    params.encodings[0].maxBitrate = 16000;
+                                }
                             }
                             sender.setParameters(params).catch(e => console.warn("Failed to set low-bandwidth params on addTrack:", e));
                         } catch (e) {
@@ -226,7 +230,10 @@
                                     delete params.encodings[0].scaleResolutionDownBy;
                                 }
                             } else if (sender.track.kind === 'audio') {
-                                if (shouldLimit) {
+                                const isScreenAudio = (screenStream && screenStream.getAudioTracks().includes(sender.track)) || sender.track.contentHint === 'music' || sender === pc._screenAudioSender;
+                                if (isScreenAudio) {
+                                    params.encodings[0].maxBitrate = 512000;
+                                } else if (shouldLimit) {
                                     params.encodings[0].maxBitrate = 16000;
                                 } else {
                                     delete params.encodings[0].maxBitrate;
@@ -1301,6 +1308,11 @@
                      if (localStream && localStream._originalStream) {
                          localStream._originalStream.getTracks().forEach(t => t.stop());
                      }
+                     if (currentAudioTrack) {
+                         newTrack.enabled = currentAudioTrack.enabled;
+                     } else if (isDeafened || (myForceFlags && myForceFlags.muted) || (roomAdminState.kind === 'stage' && !canSpeakId(persistentUserId))) {
+                         newTrack.enabled = false;
+                     }
                       if (localStream) {
                           if (currentAudioTrack) {
                               currentAudioTrack.stop();
@@ -1334,56 +1346,62 @@
              }
 
              if (videoId && videoId !== currentVideoId) {
-                 try {
-                     const constraints = { video: { deviceId: { exact: videoId } } };
-                     const newVideoStream = await navigator.mediaDevices.getUserMedia(constraints);
-                     if (isUnloading) {
-                         newVideoStream.getTracks().forEach(t => t.stop());
-                         return;
-                     }
-                     const newTrack = newVideoStream.getVideoTracks()[0];
+                 const isCameraActive = !!(currentVideoTrack && currentVideoTrack.enabled && currentVideoTrack.readyState === 'live');
+                 if (!isCameraActive) {
+                     currentVideoInputId = videoId;
+                     if (typeof savePreferences === 'function') savePreferences();
+                 } else {
+                     try {
+                         const constraints = { video: { deviceId: { exact: videoId } } };
+                         const newVideoStream = await navigator.mediaDevices.getUserMedia(constraints);
+                         if (isUnloading) {
+                             newVideoStream.getTracks().forEach(t => t.stop());
+                             return;
+                         }
+                         const newTrack = newVideoStream.getVideoTracks()[0];
 
-                      if (localStream) {
-                          localStream.addTrack(newTrack);
-                      } else {
-                          localStream = new MediaStream([newTrack]);
-                          if (localVideo) localVideo.srcObject = localStream;
+                          if (localStream) {
+                              localStream.addTrack(newTrack);
+                          } else {
+                              localStream = new MediaStream([newTrack]);
+                              if (localVideo) localVideo.srcObject = localStream;
+                          }
+
+                          for (const userId in peers) {
+                             const pc = peers[userId];
+                             const negotiationNeeded = addCameraTrackToPeer(pc, newTrack);
+                             if (negotiationNeeded) negotiate(userId, pc);
+                          }
+
+                          if (ws && ws.readyState === WebSocket.OPEN) {
+                              ws.send(JSON.stringify({
+                                  type: 'cam-toggle',
+                                  data: { enabled: true, camVideoTrackId: newTrack.id }
+                              }));
+                          }
+
+                          if (currentVideoTrack) {
+                              localStream.removeTrack(currentVideoTrack);
+                              currentVideoTrack.stop();
+                          }
+
+                          currentVideoInputId = videoId;
+                          updateLocalMediaLayout();
+                          const newFacingMode = newTrack.getSettings().facingMode;
+                          if (newFacingMode) {
+                              currentFacingMode = newFacingMode;
+                          }
+
+                      } catch (e) {
+                          console.error("Video switch failed", e);
+                      } finally {
+
+                          if (settingsVideoEl) {
+                              settingsVideoEl.disabled = false;
+                          }
                       }
-
-                      for (const userId in peers) {
-                         const pc = peers[userId];
-                         const negotiationNeeded = addCameraTrackToPeer(pc, newTrack);
-                         if (negotiationNeeded) negotiate(userId, pc);
-                      }
-
-                      if (ws && ws.readyState === WebSocket.OPEN) {
-                          ws.send(JSON.stringify({
-                              type: 'cam-toggle',
-                              data: { enabled: true, camVideoTrackId: newTrack.id }
-                          }));
-                      }
-
-                      if (currentVideoTrack) {
-                          localStream.removeTrack(currentVideoTrack);
-                          currentVideoTrack.stop();
-                      }
-
-                      currentVideoInputId = videoId;
-                      updateLocalMediaLayout();
-                      const newFacingMode = newTrack.getSettings().facingMode;
-                      if (newFacingMode) {
-                          currentFacingMode = newFacingMode;
-                      }
-
-                  } catch (e) {
-                      console.error("Video switch failed", e);
-                  } finally {
-
-                      if (settingsVideoEl) {
-                          settingsVideoEl.disabled = false;
-                      }
-                  }
-              }
+                 }
+             }
 
               updateLocalAvatar();
         }
@@ -3281,7 +3299,7 @@
                 b.classList.toggle('ctrl-locked', !!locked);
                 b.title = locked ? title : b.dataset.origTitle;
             };
-            lock('btnMic', stageLocked || myForceFlags.muted, stageLocked ? "You're in the audience" : 'Muted by an admin');
+            lock('btnMic', stageLocked || myForceFlags.muted || isDeafened, stageLocked ? "You're in the audience" : (isDeafened ? "You're deafened" : 'Muted by an admin'));
             lock('btnDeafen', myForceFlags.deafened, 'Deafened by an admin');
             lock('btnCam', stageLocked || myForceFlags.camOff, stageLocked ? "You're in the audience" : 'Camera turned off by an admin');
             lock('btnShare', stageLocked || myForceFlags.shareOff, stageLocked ? "You're in the audience" : 'Screen share turned off by an admin');
@@ -3307,8 +3325,8 @@
         // member's client misbehaves: their audio element stays muted
         // locally until they are moved onto the stage.
         function enforceAudienceAudio() {
-            document.querySelectorAll('[id^="vid-"]').forEach(el => {
-                const uid = el.id.slice(4);
+            document.querySelectorAll('[id^="vid-"], [id^="aud-screen-"]').forEach(el => {
+                const uid = el.id.startsWith('vid-') ? el.id.slice(4) : el.id.slice(11);
                 if (!uid || uid === persistentUserId) return;
                 const forceMuted = !!(roomAdminState.forced[uid] && roomAdminState.forced[uid].muted);
                 if ((roomAdminState.kind === 'stage' && !canSpeakId(uid)) || forceMuted) {
@@ -3316,7 +3334,9 @@
                     el.muted = true;
                 } else if (el.dataset.audienceMuted) {
                     delete el.dataset.audienceMuted;
-                    el.muted = false;
+                    if (!isDeafened && el.dataset.userMuted !== '1') {
+                        el.muted = false;
+                    }
                 }
             });
         }
@@ -3367,12 +3387,20 @@
             document.getElementById('knockSpinner').style.display = denied ? 'none' : '';
             const btn = document.getElementById('knockWaitingBtn');
             btn.textContent = denied ? 'Back to setup' : 'Cancel request';
-            btn.onclick = denied ? hideKnockWaiting : cancelKnock;
+            btn.onclick = denied ? backToSetupFromKnock : cancelKnock;
             el.style.display = 'flex';
         }
         function hideKnockWaiting() {
             const el = document.getElementById('knockWaiting');
             if (el) el.style.display = 'none';
+        }
+        function backToSetupFromKnock() {
+            hideKnockWaiting();
+            if (typeof leaveRoom === 'function') {
+                leaveRoom();
+            } else {
+                window.location.href = '/';
+            }
         }
         function cancelKnock() {
             knockDeniedFlag = true;
@@ -3381,7 +3409,7 @@
                 try { ws.send(JSON.stringify({ type: 'knock-cancel' })); } catch (e) {}
                 try { ws.close(); } catch (e) {}
             }
-            hideKnockWaiting();
+            backToSetupFromKnock();
         }
 
         // ---- Create-room menu (shown after Start Call, before setup) ----

@@ -79,6 +79,45 @@ mod tests {
     fn issued_keys_are_unique() {
         assert_ne!(issue_key(), issue_key());
     }
+
+    #[tokio::test]
+    async fn validate_room_resume_token_allows_channel_switch() {
+        let state = AppState {
+            rooms: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            room_cleanup_generations: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            room_creation_password: None,
+            distributed_tx: tokio::sync::broadcast::channel(16).0,
+            remote_users: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            remote_user_owners: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            channel_creation_times: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            allowed_url: None,
+            recent_distributed_msg_ids: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+            distributed_msg_history: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
+            node_id: uuid::Uuid::new_v4().to_string(),
+            admin_rooms: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            cluster_key: None,
+            p2p_runtime: None,
+            resume_records: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            away_seats: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            departure_gen: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            server_secret: std::sync::Arc::new(vec![7u8; 32]),
+        };
+
+        let room_id = "test-room";
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let token = issue_resume_token(&state, room_id, &user_id, "General").await;
+
+        // Validate directly in same channel
+        assert!(validate_resume_token(&state, room_id, &user_id, "General", Some(&token)).await);
+
+        // Validate when switching to a different channel in the same room
+        assert!(validate_room_resume_token(&state, room_id, &user_id, "Lounge", Some(&token)).await);
+
+        // Revoke token and verify both reject
+        delete_resume_token(&state, room_id, &user_id).await;
+        assert!(!validate_resume_token(&state, room_id, &user_id, "General", Some(&token)).await);
+        assert!(!validate_room_resume_token(&state, room_id, &user_id, "Lounge", Some(&token)).await);
+    }
 }
 
 // ---- Room admin messaging helpers (used by rooms.rs and distributed.rs) ----
@@ -275,6 +314,11 @@ pub(crate) async fn persist_state(state: &AppState) {
     if cfg!(test) && std::env::var_os("RUSTROOMS_STATE_FILE").is_none() {
         return;
     }
+    static PERSIST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let _persist_guard = PERSIST_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let rooms = {
         let lock = state.admin_rooms.lock().await;
         lock.iter()
@@ -477,6 +521,74 @@ pub(crate) async fn validate_resume_token(
             },
         );
         return true;
+    }
+    false
+}
+
+// Validates that `token` is a live, unrevoked resume token for `(room_id, user_id)`
+// in *any* channel of `room_id` (used when switching channels inside a room so
+// existing room members aren't re-parked in the lobby).
+pub(crate) async fn validate_room_resume_token(
+    state: &AppState,
+    room_id: &str,
+    user_id: &str,
+    channel_id: &str,
+    token: Option<&str>,
+) -> bool {
+    if validate_resume_token(state, room_id, user_id, channel_id, token).await {
+        return true;
+    }
+    let Some(token) = token.filter(|t| !t.is_empty() && t.len() <= 256) else {
+        return false;
+    };
+    {
+        let admins = state.admin_rooms.lock().await;
+        if admins
+            .get(room_id)
+            .is_some_and(|a| a.banned.contains(user_id))
+        {
+            return false;
+        }
+    }
+    let hash = resume_token_hash(token);
+    let now = current_unix_secs();
+    {
+        let lock = state.resume_records.lock().await;
+        if let Some(rec) = lock.get(&(room_id.to_string(), user_id.to_string())) {
+            if rec.token_hash == REVOKED_TOKEN_HASH && rec.expires_at > now {
+                return false;
+            }
+            return rec.token_hash == hash && rec.expires_at > now;
+        }
+    }
+    // Check known channels in the room (for cross-node channel switches)
+    let mut candidate_channels: Vec<String> = vec!["General".to_string()];
+    {
+        let rooms = state.rooms.lock().await;
+        if let Some(room) = rooms.get(room_id) {
+            for ch in room.keys() {
+                if !candidate_channels.contains(ch) {
+                    candidate_channels.push(ch.clone());
+                }
+            }
+        }
+    }
+    {
+        let remote = state.remote_users.lock().await;
+        if let Some(room) = remote.get(room_id) {
+            for ch in room.keys() {
+                if !candidate_channels.contains(ch) {
+                    candidate_channels.push(ch.clone());
+                }
+            }
+        }
+    }
+    for ch in candidate_channels {
+        if verify_signed_resume_token(&state.server_secret, room_id, user_id, &ch, token, now)
+            .is_some()
+        {
+            return true;
+        }
     }
     false
 }

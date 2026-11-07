@@ -217,6 +217,7 @@ pub(crate) struct P2pRuntime {
     scheme: String,
     public_ws_url: Option<String>,
     udp_mac_key: [u8; 32],
+    snapshot_udp_lock: Mutex<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +252,7 @@ impl P2pRuntime {
             scheme: config.scheme.clone(),
             public_ws_url: config.public_ws_url.clone(),
             udp_mac_key: derive_udp_mac_key(&config.cluster_key),
+            snapshot_udp_lock: Mutex::new(()),
         })
     }
 }
@@ -791,11 +793,13 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
                                 vec![*addr]
                             }
                         } else {
-                            peers
-                                .values()
-                                .map(|(addr, _)| *addr)
-                                .filter(|addr| item.origin_udp_addr != Some(*addr))
-                                .collect()
+                            let mut set = HashSet::new();
+                            for (addr, _) in peers.values() {
+                                if item.origin_udp_addr != Some(*addr) {
+                                    set.insert(*addr);
+                                }
+                            }
+                            set.into_iter().collect()
                         }
                     };
                     if targets.is_empty() {
@@ -804,7 +808,13 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
                     let socket = socket.clone();
                     let runtime = runtime.clone();
                     let envelope = item.envelope;
+                    let is_snapshot = envelope.snapshot_id.is_some();
                     tokio::spawn(async move {
+                        let _snapshot_guard = if is_snapshot {
+                            Some(runtime.snapshot_udp_lock.lock().await)
+                        } else {
+                            None
+                        };
                         send_envelope_udp(&socket, &runtime, &envelope, &targets).await;
                     });
                 }
@@ -1030,11 +1040,6 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
                     if let Some(wire) = encode_udp_packet(&runtime.udp_mac_key, &ack) {
                         let _ = socket.send_to(&wire, src_addr).await;
                     }
-                    runtime
-                        .active_udp_peers
-                        .lock()
-                        .await
-                        .insert(sender.clone(), (src_addr, Instant::now()));
 
                     let chunk = P2pChunk {
                         version,
@@ -1677,6 +1682,18 @@ pub(crate) async fn handle_envelope(
         .await
         .insert(envelope.source_node_id.clone(), Instant::now());
 
+    // Direct UDP peer tracking: only update direct UDP peer mapping when
+    // received with hop_count == 0 to avoid poisoning with intermediate relay IPs.
+    if let Some(src_addr) = origin_udp_addr
+        && envelope.hop_count == 0
+    {
+        runtime
+            .active_udp_peers
+            .lock()
+            .await
+            .insert(envelope.source_node_id.clone(), (src_addr, Instant::now()));
+    }
+
     // Transitive mesh forwarding: if this envelope is either broadcast or
     // targeted at another node, forward it with hop_count + 1 to other links.
     let is_for_other_node = envelope
@@ -1765,13 +1782,15 @@ pub(crate) async fn handle_envelope(
                 message.channel_id.clone(),
                 message.user_id.clone(),
             );
+            let mut record_snapshot_user = false;
+            let mut validated_snapshot_id = None;
             if let Some(snapshot_id) = envelope.snapshot_id {
                 let Some(snapshot_id) = valid_snapshot_id(Some(snapshot_id)) else {
                     return;
                 };
                 let mut snapshots = runtime.snapshots.lock().await;
                 let Some(snapshot) =
-                    snapshots.get_mut(&(envelope.source_node_id.clone(), snapshot_id))
+                    snapshots.get_mut(&(envelope.source_node_id.clone(), snapshot_id.clone()))
                 else {
                     return;
                 };
@@ -1786,12 +1805,13 @@ pub(crate) async fn handle_envelope(
                     if snapshot.removed_users.contains(&user_key) {
                         return;
                     }
-                    snapshot.users.insert(user_key);
+                    record_snapshot_user = true;
+                    validated_snapshot_id = Some(snapshot_id);
                 }
             } else {
                 let is_presence = matches!(
                     message.msg_type.as_str(),
-                    "user-joined" | "user-left" | "user-kicked" | "user-banned"
+                    "user-joined" | "user-left" | "user-kicked" | "user-banned" | "user-resumed"
                 );
                 let is_channel_change = matches!(
                     message.msg_type.as_str(),
@@ -1801,18 +1821,39 @@ pub(crate) async fn handle_envelope(
                     let mut snapshots = runtime.snapshots.lock().await;
                     for ((source, _), snapshot) in snapshots.iter_mut() {
                         if is_presence {
-                            let applies = matches!(
-                                message.msg_type.as_str(),
-                                "user-kicked" | "user-banned"
-                            ) || source == &envelope.source_node_id;
-                            if applies {
+                            if message.msg_type == "user-resumed" {
                                 snapshot.last_activity = Instant::now();
-                                if message.msg_type == "user-joined" {
+                                if source == &envelope.source_node_id {
                                     snapshot.removed_users.remove(&user_key);
                                     snapshot.users.insert(user_key.clone());
                                 } else {
-                                    snapshot.users.remove(&user_key);
-                                    snapshot.removed_users.insert(user_key.clone());
+                                    let stale: Vec<_> = snapshot
+                                        .users
+                                        .iter()
+                                        .filter(|(r, _, u)| {
+                                            r == &message.room_id && u == &message.user_id
+                                        })
+                                        .cloned()
+                                        .collect();
+                                    for k in stale {
+                                        snapshot.users.remove(&k);
+                                        snapshot.removed_users.insert(k);
+                                    }
+                                }
+                            } else {
+                                let applies = matches!(
+                                    message.msg_type.as_str(),
+                                    "user-kicked" | "user-banned"
+                                ) || source == &envelope.source_node_id;
+                                if applies {
+                                    snapshot.last_activity = Instant::now();
+                                    if message.msg_type == "user-joined" {
+                                        snapshot.removed_users.remove(&user_key);
+                                        snapshot.users.insert(user_key.clone());
+                                    } else {
+                                        snapshot.users.remove(&user_key);
+                                        snapshot.removed_users.insert(user_key.clone());
+                                    }
                                 }
                             }
                         }
@@ -1854,7 +1895,18 @@ pub(crate) async fn handle_envelope(
                     }
                 }
             }
-            process_distributed_message(message, &envelope.source_node_id, state).await;
+            let processed =
+                process_distributed_message(message, &envelope.source_node_id, state).await;
+            if processed && record_snapshot_user && let Some(snap_id) = validated_snapshot_id {
+                let mut snapshots = runtime.snapshots.lock().await;
+                if let Some(snapshot) =
+                    snapshots.get_mut(&(envelope.source_node_id, snap_id))
+                {
+                    if !snapshot.removed_users.contains(&user_key) {
+                        snapshot.users.insert(user_key);
+                    }
+                }
+            }
         }
     }
 }

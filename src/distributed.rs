@@ -389,6 +389,10 @@ pub(crate) async fn schedule_empty_room_cleanup(state: &AppState, room_id: &str)
             .get(&room_id)
             .is_some_and(|room| room.values().any(|channel| !channel.is_empty()));
         if has_remote_users || room_has_pending_knocks(&state, &room_id).await {
+            let mut generations = state.room_cleanup_generations.lock().await;
+            if generations.get(&room_id).copied() == Some(generation) {
+                generations.remove(&room_id);
+            }
             return;
         }
 
@@ -572,11 +576,42 @@ async fn apply_distributed_message(
         }
         "user-left" | "user-kicked" | "user-banned" => {
             if msg.msg_type == "user-banned" {
+                let pending_knock_tx = {
+                    let mut lock = state.admin_rooms.lock().await;
+                    let a = lock.entry(msg.room_id.clone()).or_default();
+                    a.banned.insert(msg.user_id.clone());
+                    a.admins.remove(&msg.user_id);
+                    a.speakers.remove(&msg.user_id);
+                    a.audience.remove(&msg.user_id);
+                    a.forced.remove(&msg.user_id);
+                    a.approved.remove(&msg.user_id);
+                    for list in a.remote_pending.values_mut() {
+                        list.retain(|item| {
+                            item.get("id").and_then(|v| v.as_str()) != Some(msg.user_id.as_str())
+                        });
+                    }
+                    a.pending.remove(&msg.user_id).map(|p| p.tx)
+                };
+                if let Some(ptx) = pending_knock_tx {
+                    let denied = crate::admin::signal_text("knock-denied", None, None);
+                    let _ = ptx.try_send(Ok(Message::Text(denied.into())));
+                    let _ = ptx.try_send(Ok(Message::Close(None)));
+                    crate::admin::send_knock_update(state, &msg.room_id).await;
+                }
+                crate::admin::persist_state(state).await;
+            } else if msg.msg_type == "user-kicked" {
                 let mut lock = state.admin_rooms.lock().await;
-                lock.entry(msg.room_id.clone())
-                    .or_default()
-                    .banned
-                    .insert(msg.user_id.clone());
+                if let Some(a) = lock.get_mut(&msg.room_id) {
+                    a.approved.remove(&msg.user_id);
+                }
+            }
+            if matches!(msg.msg_type.as_str(), "user-kicked" | "user-banned") {
+                state
+                    .away_seats
+                    .lock()
+                    .await
+                    .remove(&(msg.room_id.clone(), msg.user_id.clone()));
+                crate::admin::delete_resume_token(state, &msg.room_id, &msg.user_id).await;
             }
             let removed_remote = {
                 // user-left authorization removes the old ownership record
@@ -609,12 +644,23 @@ async fn apply_distributed_message(
                 let mut rooms_lock = rooms.lock().await;
                 let mut removed_local = false;
                 let mut victim_tx = None;
-                if let Some(room) = rooms_lock.get_mut(&msg.room_id)
-                    && let Some(channel) = room.get_mut(&msg.channel_id)
-                    && let Some((tx, _)) = channel.remove(&msg.user_id)
-                {
-                    removed_local = true;
-                    victim_tx = Some(tx);
+                let mut victim_channel = msg.channel_id.clone();
+                if let Some(room) = rooms_lock.get_mut(&msg.room_id) {
+                    if let Some(channel) = room.get_mut(&msg.channel_id)
+                        && let Some((tx, _)) = channel.remove(&msg.user_id)
+                    {
+                        removed_local = true;
+                        victim_tx = Some(tx);
+                    } else {
+                        for (ch, channel) in room.iter_mut() {
+                            if let Some((tx, _)) = channel.remove(&msg.user_id) {
+                                removed_local = true;
+                                victim_tx = Some(tx);
+                                victim_channel = ch.clone();
+                                break;
+                            }
+                        }
+                    }
                 }
                 if removed_local {
                     let kick_notify = serde_json::to_string(&SignalMessage {
@@ -627,7 +673,7 @@ async fn apply_distributed_message(
                     // Reuse the lock already held above: re-acquiring the
                     // same tokio Mutex would deadlock the message loop.
                     if let Some(room) = rooms_lock.get(&msg.room_id)
-                        && let Some(channel) = room.get(&msg.channel_id)
+                        && let Some(channel) = room.get(&victim_channel)
                     {
                         for (_, (tx, _)) in channel.iter() {
                             let _ = tx.try_send(Ok(Message::Text(kick_notify.clone().into())));
@@ -950,10 +996,13 @@ async fn apply_distributed_message(
                     if remote_list.is_empty() {
                         admin.remote_pending.remove(&key);
                     } else {
-                        admin.remote_pending.insert(key, remote_list);
+                        admin.remote_pending.insert(key, remote_list.clone());
                     }
                 }
                 crate::admin::notify_local_admins_knock_update(state, &msg.room_id).await;
+                if remote_list.is_empty() {
+                    schedule_empty_room_cleanup(state, &msg.room_id).await;
+                }
             }
         }
         "mod-action" => {
@@ -993,16 +1042,24 @@ async fn apply_distributed_message(
                 let mut lock = state.admin_rooms.lock().await;
                 lock.get_mut(&msg.room_id).and_then(|a| {
                     let removed = a.pending.remove(&msg.user_id);
-                    if approve && removed.is_some() {
+                    if approve {
                         a.approved.insert(msg.user_id.clone());
                     }
-                    if block && removed.is_some() {
+                    if block {
                         a.banned.insert(msg.user_id.clone());
                         a.approved.remove(&msg.user_id);
                     }
                     removed.map(|p| p.tx)
                 })
             };
+            if block {
+                crate::admin::delete_resume_token(state, &msg.room_id, &msg.user_id).await;
+                state
+                    .away_seats
+                    .lock()
+                    .await
+                    .remove(&(msg.room_id.clone(), msg.user_id.clone()));
+            }
             if let Some(ptx) = pending_tx {
                 if approve {
                     let text = crate::admin::signal_text("knock-approved", None, None);
@@ -1014,15 +1071,11 @@ async fn apply_distributed_message(
                 }
                 crate::admin::send_knock_update(state, &msg.room_id).await;
                 if block {
-                    crate::admin::delete_resume_token(state, &msg.room_id, &msg.user_id)
-                        .await;
-                    state
-                        .away_seats
-                        .lock()
-                        .await
-                        .remove(&(msg.room_id.clone(), msg.user_id.clone()));
                     crate::admin::broadcast_admin_update(state, &msg.room_id).await;
                 }
+            }
+            if !approve {
+                schedule_empty_room_cleanup(state, &msg.room_id).await;
             }
         }
         "signal" => {

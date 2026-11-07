@@ -202,15 +202,17 @@ impl RoomAdmin {
     // that owns the room's admin actions. Key material, pending knocks
     // and approvals are node-local and never overwritten here.
     pub(crate) fn apply_public_state(&mut self, data: &serde_json::Value) {
-        // Adopt the issuing node's key hash once, so creator keys can
+        // Adopt the issuing node's key hash so creator keys can
         // be verified on every node (given a shared server secret).
-        if self.key_hash.is_none() {
-            if let Some(hash) = data.get("keyHash").and_then(|v| v.as_str()) {
-                self.key_hash = Some(hash.to_string());
-            }
+        if let Some(hash) = data.get("keyHash").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            self.key_hash = Some(hash.to_string());
         }
-        if let Some(creator) = data.get("creatorId").and_then(|v| v.as_str()) {
-            self.creator_id = Some(creator.to_string());
+        if let Some(v) = data.get("creatorId") {
+            if let Some(creator) = v.as_str() {
+                self.creator_id = Some(creator.to_string());
+            } else if v.is_null() {
+                self.creator_id = None;
+            }
         }
         let read_set = |key: &str| -> HashSet<String> {
             data.get(key)
