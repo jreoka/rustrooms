@@ -317,7 +317,7 @@
                         </div>
                     </div>
 
-                    <!-- Connection & Quality Settings -->
+                    <!-- Appearance -->
                     <div class="border-t border-[var(--border-subtle)] pt-4 mt-4 space-y-3 text-left">
                         <div class="m3-row flex items-center justify-between">
                             <div class="flex flex-col">
@@ -326,16 +326,6 @@
                             </div>
                             <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
                                 <input type="checkbox" id="setupTheme" onchange="toggleTheme(this.checked)" class="sr-only peer">
-                                <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
-                            </label>
-                        </div>
-                        <div class="m3-row flex items-center justify-between">
-                            <div class="flex flex-col">
-                                <span class="text-sm font-semibold text-white">Low Bandwidth Mode</span>
-                                <span class="text-xs text-zinc-400">Reduces audio & video quality to save data</span>
-                            </div>
-                            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
-                                <input type="checkbox" id="setupLowBandwidth" onchange="handleLowBandwidthChange(this.checked)" class="sr-only peer">
                                 <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
                             </label>
                         </div>
@@ -436,16 +426,6 @@
                                     <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
                                 </label>
                             </div>
-                            <div class="m3-row flex items-center justify-between">
-                                <div class="flex flex-col">
-                                    <span class="text-sm font-semibold text-white">Low Bandwidth Mode</span>
-                                    <span class="text-xs text-zinc-400">Reduces audio & video quality to save data</span>
-                                </div>
-                                <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
-                                    <input type="checkbox" id="settingsLowBandwidth" onchange="handleLowBandwidthChange(this.checked)" class="sr-only peer">
-                                    <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
-                                </label>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -474,10 +454,6 @@
                 <div class="status-pill-wrapper" id="statusPillWrapper">
                     <div class="status-pill px-3 md:px-4 py-1.5 md:py-2 rounded-full flex items-center justify-center gap-2 md:gap-2.5 flex-shrink-0 h-8 md:h-10" onclick="toggleStatsWindow()">
                         <div id="connectionDot" class="connection-dot"></div>
-                        <!-- Orange lightning icon -->
-                        <svg id="lowBandwidthLightning" class="w-4 h-4 text-amber-500 hidden animate-pulse" fill="currentColor" viewBox="0 0 24 24" style="color: #f59e0b;" title="Low Bandwidth Mode Active">
-                            <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
                         <span id="statusText" class="text-xs md:text-sm font-medium hidden sm:inline-block" style="color: var(--text-primary);">Waiting...</span>
                         <button id="btnReconnect" onclick="event.stopPropagation(); retryConnection()" class="hidden ml-1 p-1 rounded-lg transition-all hover:bg-white/10" style="color: var(--text-muted);" title="Retry Connection">
                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
@@ -614,8 +590,24 @@
                     </div>
                 </div>
                 <div class="stats-row mt-3">
-                    <span class="stats-row-label">Low Bandwidth Mode</span>
-                    <span id="statLowBandwidth" class="stats-row-value text-zinc-400 font-normal">Disabled</span>
+                    <span class="stats-row-label">Smart Quality</span>
+                    <span id="statAutoQuality" class="stats-row-value font-semibold text-emerald-400">Auto - High</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-row-label">Voice In</span>
+                    <span id="statVoiceIn" class="stats-row-value">--</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-row-label">Voice Out</span>
+                    <span id="statVoiceOut" class="stats-row-value">--</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-row-label">Video Out</span>
+                    <span id="statVideoOut" class="stats-row-value">High</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-row-label">Audio Out</span>
+                    <span id="statAudioOut" class="stats-row-value">High</span>
                 </div>
             </div>
 

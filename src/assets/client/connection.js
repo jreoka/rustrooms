@@ -80,7 +80,6 @@
                                     screenAudioTrackId: screenStream ? (screenStream.getAudioTracks()[0]?.id || null) : null,
                                     isMuted: isMuted,
                                     isDeafened: isDeafened,
-                                    isLowBandwidthMode: isLowBandwidthMode,
                                     isMobile: isMobileClient,
                                     password: roomCreationPassword
                                 }
@@ -209,7 +208,6 @@
                                         delete peerScreenHasAudio[msg.userId];
                                         delete peerMicTrackId[msg.userId];
                                         delete peerScreenAudioTrackId[msg.userId];
-                                        delete peerLowBandwidthStatus[msg.userId];
                                         updateRoomListUI();
                                     }
                                     break;
@@ -282,9 +280,6 @@
                                                 if (user.status.isScreenSharing !== undefined) {
                                                     peerScreenStatus[user.id] = user.status.isScreenSharing;
                                                 }
-                                                if (user.status.isLowBandwidthMode !== undefined) {
-                                                    peerLowBandwidthStatus[user.id] = user.status.isLowBandwidthMode;
-                                                }
                                                 if (peers[user.id]) {
                                                     updatePeerInfo(user.id, user.status.nickname, user.status.avatar, user.status.isMuted, user.status.isDeafened, user.status.isGif, user.status.staticFrame);
                                                 } else {
@@ -326,10 +321,6 @@
                                         if (msg.data.screenEnabled !== undefined) {
                                             peerScreenStatus[msg.userId] = msg.data.screenEnabled;
                                         }
-                                        if (msg.data.isLowBandwidthMode !== undefined) {
-                                            peerLowBandwidthStatus[msg.userId] = msg.data.isLowBandwidthMode;
-                                            updateAllSenderBitrates();
-                                        }
 
                                         if (peers[msg.userId]) {
                                             updatePeerInfo(msg.userId, msg.data?.nickname, msg.data?.avatar, msg.data?.isMuted, msg.data?.isDeafened, msg.data?.isGif, msg.data?.staticFrame);
@@ -370,7 +361,6 @@
                                                 screenAudioTrackId: screenStream ? (screenStream.getAudioTracks()[0]?.id || null) : null,
                                                 isMuted: myMuted,
                                                 isDeafened: isDeafened,
-                                                isLowBandwidthMode: isLowBandwidthMode,
                                                             isMobile: isMobileClient
                                             }
                                         }));
@@ -387,7 +377,6 @@
                                         delete peerScreenHasAudio[msg.userId];
                                         delete peerMicTrackId[msg.userId];
                                         delete peerScreenAudioTrackId[msg.userId];
-                                        delete peerLowBandwidthStatus[msg.userId];
                                     }
                                     break;
                                 case 'user-kicked':
@@ -408,7 +397,6 @@
                                         delete peerScreenHasAudio[msg.userId];
                                         delete peerMicTrackId[msg.userId];
                                         delete peerScreenAudioTrackId[msg.userId];
-                                        delete peerLowBandwidthStatus[msg.userId];
                                         updateRoomListUI();
                                     }
                                     break;
@@ -427,10 +415,6 @@
                                          isGif: msg.data.isGif,
                                          staticFrame: msg.data.staticFrame
                                      };
-                                     if (msg.data.isLowBandwidthMode !== undefined) {
-                                         peerLowBandwidthStatus[msg.userId] = msg.data.isLowBandwidthMode;
-                                         updateAllSenderBitrates();
-                                     }
                                      updatePeerInfo(msg.userId, msg.data.nickname, msg.data.avatar, msg.data.isMuted, msg.data.isDeafened, msg.data.isGif, msg.data.staticFrame);
                                     break;
                                 case 'cam-toggle':
@@ -484,10 +468,6 @@
                                         }
                                         if (msg.data.screenEnabled !== undefined) {
                                             peerScreenStatus[msg.userId] = msg.data.screenEnabled;
-                                        }
-                                        if (msg.data.isLowBandwidthMode !== undefined) {
-                                            peerLowBandwidthStatus[msg.userId] = msg.data.isLowBandwidthMode;
-                                            updateAllSenderBitrates();
                                         }
                                         if (identifiedScreenAudio !== undefined) {
                                             peerScreenHasAudio[msg.userId] = identifiedScreenAudio;
@@ -754,17 +734,6 @@
                         hasIcons = true;
                         iconsHTML += `<span class="text-red-500" title="Muted"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path></svg></span>`;
                     }
-
-                    const isPeerLBM = (userId === 'local') ? isLowBandwidthMode : (peerLowBandwidthStatus[userId] === true);
-                    if (isPeerLBM) {
-                        hasIcons = true;
-                        iconsHTML += `
-                            <span class="text-amber-500 animate-pulse" title="Low Bandwidth Mode Active">
-                                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                            </span>
-                        `;
-                    }
-
 
                     if (hasIcons) {
                         statusContainer.classList.remove('hidden');
@@ -1436,10 +1405,7 @@
                 if (screenAudioTrack) {
                     const sender = pc.addTrack(screenAudioTrack, screenStream);
                     pc._screenAudioSender = sender;
-                    const params = sender.getParameters();
-                    if (!params.encodings) params.encodings = [{}];
-                    params.encodings[0].maxBitrate = 512000;
-                    sender.setParameters(params).catch(e => console.warn(e));
+                    try { applySmartQualityToSender(sender, screenAudioTrack); } catch (e) {}
                 }
             }
 
@@ -1956,6 +1922,8 @@
         function leaveRoom() {
 
             hasLeftRoom = true;
+            try { stopSmartQualityMonitor(); } catch (e) {}
+            try { smartQuality.videoLevel = 2; smartQuality.audioLevel = 2; smartQuality.voiceIn = '--'; smartQuality.voiceOut = '--'; } catch (e) {}
             try {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ type: 'leave' }));
@@ -2092,7 +2060,6 @@
 
             // Reset speaker tracking
             activeSpeakers = {};
-            peerLowBandwidthStatus = {};
 
             // Hide/reset status pill elements to pristine states
             const reconnectBtn = document.getElementById('btnReconnect');
@@ -2101,8 +2068,6 @@
             const pingContainer = document.getElementById('pingContainer');
             if (pingContainer) pingContainer.classList.add('hidden');
 
-            const lightning = document.getElementById('lowBandwidthLightning');
-            if (lightning) lightning.classList.add('hidden');
 
             statusText.innerText = 'Waiting...';
             connectionDot.className = 'connection-dot';
@@ -2794,10 +2759,7 @@
                             let sender = pc.addTrack(screenAudioTrack, screenStream);
                             pc._screenAudioSender = sender;
 
-                            const params = sender.getParameters();
-                            if (!params.encodings) params.encodings = [{}];
-                            params.encodings[0].maxBitrate = 512000;
-                            sender.setParameters(params).catch(e => console.warn(e));
+                            try { applySmartQualityToSender(sender, screenAudioTrack); } catch (e) {}
 
                             shouldNegotiate = true;
                         }
@@ -2836,15 +2798,6 @@
                     statusIcons = `<span class="ml-1.5 inline-flex items-center text-red-500" title="Muted"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path></svg></span>`;
                 }
             }
-
-            if (isLowBandwidthMode) {
-                statusIcons += `
-                    <span class="ml-1.5 inline-flex items-center text-amber-500 animate-pulse" title="Low Bandwidth Mode Active">
-                        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                    </span>
-                `;
-            }
-
 
             label.innerHTML = `<span class="flex items-center">${escapeHtml(userNickname)} (You)${statusIcons}</span>`;
         }

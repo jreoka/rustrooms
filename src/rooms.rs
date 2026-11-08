@@ -430,13 +430,6 @@ pub(crate) async fn handle_socket(
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
 
-                            let is_low_bandwidth_mode = parsed
-                                .data
-                                .as_ref()
-                                .and_then(|d| d.get("isLowBandwidthMode"))
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-
                             let is_mobile = parsed
                                 .data
                                 .as_ref()
@@ -550,7 +543,6 @@ pub(crate) async fn handle_socket(
                                 is_muted: false,
                                 is_deafened: false,
                                 is_screen_sharing: false,
-                                is_low_bandwidth_mode: false,
                                 is_mobile: false,
                                 profile_rev: 0,
                             };
@@ -887,7 +879,6 @@ pub(crate) async fn handle_socket(
                                         is_muted,
                                         is_deafened,
                                         is_screen_sharing,
-                                        is_low_bandwidth_mode,
                                         is_mobile,
                                         profile_rev,
                                     };
@@ -1075,7 +1066,6 @@ pub(crate) async fn handle_socket(
                                                             "isMuted": status.is_muted,
                                                             "isDeafened": status.is_deafened,
                                                             "isScreenSharing": status.is_screen_sharing,
-                                                            "isLowBandwidthMode": status.is_low_bandwidth_mode,
                                                             "isMobile": status.is_mobile,
                                                             "profileRev": status.profile_rev
                                                         }
@@ -1101,7 +1091,6 @@ pub(crate) async fn handle_socket(
                                                             "isMuted": status.is_muted,
                                                             "isDeafened": status.is_deafened,
                                                             "isScreenSharing": status.is_screen_sharing,
-                                                            "isLowBandwidthMode": status.is_low_bandwidth_mode,
                                                             "isMobile": status.is_mobile,
                                                             "profileRev": status.profile_rev
                                                         }
@@ -1146,7 +1135,6 @@ pub(crate) async fn handle_socket(
                                 "camVideoTrackId": cam_video_track_id,
                                 "screenVideoTrackId": screen_video_track_id,
                                 "screenAudioTrackId": screen_audio_track_id,
-                                "isLowBandwidthMode": joined_status.is_low_bandwidth_mode,
                                 "isMobile": joined_status.is_mobile,
                                 "profileRev": joined_status.profile_rev,
                                 "createdAt": created_at
@@ -1317,12 +1305,6 @@ pub(crate) async fn handle_socket(
                                                     d.get("isDeafened").and_then(|v| v.as_bool())
                                                 {
                                                     status.is_deafened = d;
-                                                }
-                                                if let Some(lbm) = d
-                                                    .get("isLowBandwidthMode")
-                                                    .and_then(|v| v.as_bool())
-                                                {
-                                                    status.is_low_bandwidth_mode = lbm;
                                                 }
                                                 if status.avatar.is_none() {
                                                     status.is_gif = false;

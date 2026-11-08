@@ -89,9 +89,24 @@
         let isDeafened = false;
         let roomCreationPassword = sessionStorage.getItem('rustrooms_room_password');
         let workletLoadingPromise = null;
-        let isLowBandwidthMode = false;
+        // Smart Auto Quality: always-on adaptive engine. No manual toggle.
+        // Outgoing video/audio sender bitrates + capture constraints are
+        // continuously adjusted from live getStats (RTT, loss, jitter,
+        // available outgoing bitrate) plus peer count / mobile conditions.
+        let smartQuality = {
+            videoLevel: 2, // 0=Low 1=Medium 2=High
+            audioLevel: 2, // 0=Low 1=Medium 2=High
+            voiceIn: '--',
+            voiceOut: '--',
+            videoOutLabel: 'High',
+            audioOutLabel: 'High',
+            vPoor: 0,
+            vGood: 0,
+            aPoor: 0,
+            aGood: 0,
+            monitorTimer: null
+        };
         let activeSpeakers = {};
-        let peerLowBandwidthStatus = {};
         // Avatar payloads are stripped from room-list; this cache restores them
         // in the sidebar for users seen via existing-users / user-joined /
         // identify / user-update.
@@ -118,41 +133,29 @@
         let activeTabSessionKey = null;
         let isUnloading = false;
 
-        // Intercept getUserMedia to apply appropriate bandwidth constraints
+        // Capture always starts at full quality — adaptation happens at the
+        // sender-encoding layer (maxBitrate / scaleResolutionDownBy) so it
+        // is hitless and reversible without re-capture.
         (function() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
                 navigator.mediaDevices.getUserMedia = function(constraints) {
                     if (constraints && constraints.video) {
-                        if (isLowBandwidthMode) {
-                            if (typeof constraints.video === 'boolean') {
-                                constraints.video = {
-                                    width: { max: 320 },
-                                    height: { max: 240 },
-                                    frameRate: { max: 15 }
-                                };
-                            } else if (typeof constraints.video === 'object') {
-                                constraints.video.width = { max: 320 };
-                                constraints.video.height = { max: 240 };
-                                constraints.video.frameRate = { max: 15 };
+                        if (typeof constraints.video === 'boolean') {
+                            constraints.video = {
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 },
+                                frameRate: { ideal: 30 }
+                            };
+                        } else if (typeof constraints.video === 'object') {
+                            if (constraints.video.width === undefined) {
+                                constraints.video.width = { ideal: 1280 };
                             }
-                        } else {
-                            if (typeof constraints.video === 'boolean') {
-                                constraints.video = {
-                                    width: { ideal: 1280 },
-                                    height: { ideal: 720 },
-                                    frameRate: { ideal: 30 }
-                                };
-                            } else if (typeof constraints.video === 'object') {
-                                if (constraints.video.width === undefined) {
-                                    constraints.video.width = { ideal: 1280 };
-                                }
-                                if (constraints.video.height === undefined) {
-                                    constraints.video.height = { ideal: 720 };
-                                }
-                                if (constraints.video.frameRate === undefined) {
-                                    constraints.video.frameRate = { ideal: 30 };
-                                }
+                            if (constraints.video.height === undefined) {
+                                constraints.video.height = { ideal: 720 };
+                            }
+                            if (constraints.video.frameRate === undefined) {
+                                constraints.video.frameRate = { ideal: 30 };
                             }
                         }
                     }
@@ -169,139 +172,301 @@
                 };
             }
 
-            // Intercept RTCPeerConnection.prototype.addTrack to enforce low-bandwidth bitrates
+            // New senders immediately inherit the current smart-quality level
+            // so a freshly added track never blasts at full bitrate while
+            // the network is degraded.
             const originalAddTrack = RTCPeerConnection.prototype.addTrack;
             RTCPeerConnection.prototype.addTrack = function(track, ...streams) {
                 const sender = originalAddTrack.apply(this, [track, ...streams]);
-                
-                // Find the peer user ID associated with this connection
-                let targetUserId = null;
-                for (const uId in peers) {
-                    if (peers[uId] === this) {
-                        targetUserId = uId;
-                        break;
+                setTimeout(() => {
+                    try {
+                        applySmartQualityToSender(sender, track);
+                    } catch (e) {
+                        console.warn("Failed to apply smart-quality params on addTrack:", e);
                     }
-                }
-
-                const isRemoteLBM = targetUserId && (peerLowBandwidthStatus[targetUserId] === true);
-                if (isLowBandwidthMode || isRemoteLBM) {
-                    setTimeout(() => {
-                        try {
-                            const params = sender.getParameters();
-                            if (!params.encodings) params.encodings = [{}];
-                            if (track.kind === 'video') {
-                                const isScreen = screenStream && screenStream.getVideoTracks().includes(track);
-                                params.encodings[0].maxBitrate = isScreen ? 150000 : 80000;
-                                params.encodings[0].scaleResolutionDownBy = isScreen ? 1.5 : 2.0;
-                            } else if (track.kind === 'audio') {
-                                const isScreenAudio = (screenStream && screenStream.getAudioTracks().includes(track)) || track.contentHint === 'music';
-                                if (!isScreenAudio) {
-                                    params.encodings[0].maxBitrate = 16000;
-                                }
-                            }
-                            sender.setParameters(params).catch(e => console.warn("Failed to set low-bandwidth params on addTrack:", e));
-                        } catch (e) {
-                            console.warn("Failed to apply track parameters in wrapper:", e);
-                        }
-                    }, 100);
-                }
+                }, 100);
                 return sender;
             };
         })();
+
+        const SQ_VIDEO = [
+            { label: 'Low', maxBitrate: 150000, screenMaxBitrate: 350000, scale: 2.0 },
+            { label: 'Medium', maxBitrate: 600000, screenMaxBitrate: 900000, scale: 1.5 },
+            { label: 'High', maxBitrate: null, screenMaxBitrate: 2500000, scale: 1.0 }
+        ];
+        const SQ_AUDIO = [
+            { label: 'Low', maxBitrate: 16000 },
+            { label: 'Medium', maxBitrate: 32000 },
+            { label: 'High', maxBitrate: 64000 }
+        ];
+        const SQ_SCREEN_AUDIO = [128000, 256000, 512000];
+
+        function applySmartQualityToSender(sender, track) {
+            if (!sender || !track) return;
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+                if (track.kind === 'video') {
+                    const isScreen = (typeof screenStream !== 'undefined' && screenStream && screenStream.getVideoTracks().includes(track));
+                    const v = SQ_VIDEO[smartQuality.videoLevel];
+                    if (smartQuality.videoLevel >= 2 && !isScreen) {
+                        delete params.encodings[0].maxBitrate;
+                        delete params.encodings[0].scaleResolutionDownBy;
+                        if (params.degradationPreference !== undefined) params.degradationPreference = 'balanced';
+                    } else {
+                        params.encodings[0].maxBitrate = isScreen ? v.screenMaxBitrate : v.maxBitrate;
+                        params.encodings[0].scaleResolutionDownBy = v.scale;
+                        if (params.degradationPreference !== undefined) params.degradationPreference = 'maintain-framerate';
+                    }
+                } else if (track.kind === 'audio') {
+                    const isScreenAudio = (typeof screenStream !== 'undefined' && screenStream && screenStream.getAudioTracks().includes(track)) || track.contentHint === 'music';
+                    if (isScreenAudio) {
+                        params.encodings[0].maxBitrate = SQ_SCREEN_AUDIO[smartQuality.videoLevel];
+                    } else {
+                        const a = SQ_AUDIO[smartQuality.audioLevel];
+                        params.encodings[0].maxBitrate = a.maxBitrate;
+                    }
+                }
+                sender.setParameters(params).catch(e => console.warn("Failed to apply smart-quality params:", e));
+            } catch (e) {
+                console.warn("Failed to apply smart-quality params:", e);
+            }
+        }
 
         function updateAllSenderBitrates() {
             for (const userId in peers) {
                 const pc = peers[userId];
                 if (!pc) continue;
-                const isRemoteLBM = peerLowBandwidthStatus[userId] === true;
-                const shouldLimit = isLowBandwidthMode || isRemoteLBM;
                 pc.getSenders().forEach(sender => {
                     if (sender.track) {
-                        try {
-                            const params = sender.getParameters();
-                            if (!params.encodings) params.encodings = [{}];
-                            if (sender.track.kind === 'video') {
-                                const isScreen = screenStream && screenStream.getVideoTracks().includes(sender.track);
-                                if (shouldLimit) {
-                                    params.encodings[0].maxBitrate = isScreen ? 150000 : 80000;
-                                    params.encodings[0].scaleResolutionDownBy = isScreen ? 1.5 : 2.0;
-                                } else {
-                                    delete params.encodings[0].maxBitrate;
-                                    delete params.encodings[0].scaleResolutionDownBy;
-                                }
-                            } else if (sender.track.kind === 'audio') {
-                                const isScreenAudio = (screenStream && screenStream.getAudioTracks().includes(sender.track)) || sender.track.contentHint === 'music' || sender === pc._screenAudioSender;
-                                if (isScreenAudio) {
-                                    params.encodings[0].maxBitrate = 512000;
-                                } else if (shouldLimit) {
-                                    params.encodings[0].maxBitrate = 16000;
-                                } else {
-                                    delete params.encodings[0].maxBitrate;
-                                }
-                            }
-                            sender.setParameters(params).catch(e => console.warn("Failed to dynamically update sender params:", e));
-                        } catch (e) {
-                            console.warn("Failed to update sender params:", e);
+                        // Screen-audio senders are tagged via the pc handle.
+                        if (sender === pc._screenAudioSender && sender.track.kind === 'audio') {
+                            try {
+                                const params = sender.getParameters();
+                                if (!params.encodings) params.encodings = [{}];
+                                params.encodings[0].maxBitrate = SQ_SCREEN_AUDIO[smartQuality.videoLevel];
+                                sender.setParameters(params).catch(e => console.warn("Failed to update screen-audio params:", e));
+                            } catch (e) {}
+                        } else {
+                            applySmartQualityToSender(sender, sender.track);
                         }
                     }
                 });
             }
+            smartQuality.videoOutLabel = SQ_VIDEO[smartQuality.videoLevel].label;
+            smartQuality.audioOutLabel = SQ_AUDIO[smartQuality.audioLevel].label;
+            updateSmartQualityStatsUI();
         }
 
-        async function updateLocalVideoConstraints() {
-            if (localStream) {
-                const videoTrack = localStream.getVideoTracks()[0];
-                if (videoTrack) {
-                    try {
-                        if (isLowBandwidthMode) {
-                            await videoTrack.applyConstraints({
-                                width: { max: 320 },
-                                height: { max: 240 },
-                                frameRate: { max: 15 }
-                            });
-                        } else {
-                            await videoTrack.applyConstraints({
-                                width: { ideal: 1280 },
-                                height: { ideal: 720 },
-                                frameRate: { ideal: 30 }
-                            });
+        function scoreVoiceQuality(lossPct, jitterMs, rttMs) {
+            const loss = lossPct || 0;
+            const jit = jitterMs || 0;
+            const rtt = rttMs || 0;
+            if (loss > 10 || jit > 80 || rtt > 450) return 'Poor';
+            if (loss > 5 || jit > 40 || rtt > 280) return 'Fair';
+            if (loss > 2 || jit > 20 || rtt > 150) return 'Good';
+            return 'Excellent';
+        }
+
+        function updateSmartQualityStatsUI() {
+            const el = document.getElementById('statAutoQuality');
+            if (el) {
+                const lvl = smartQuality.videoLevel >= 2 && smartQuality.audioLevel >= 2 ? 'High'
+                    : (smartQuality.videoLevel <= 0 || smartQuality.audioLevel <= 0 ? 'Low' : 'Medium');
+                el.textContent = `Auto - ${lvl}`;
+                el.className = 'stats-row-value font-semibold ' + (lvl === 'High' ? 'text-emerald-400' : lvl === 'Medium' ? 'text-amber-400' : 'text-orange-400');
+            }
+            const vi = document.getElementById('statVoiceIn');
+            if (vi) { vi.textContent = smartQuality.voiceIn; }
+            const vo = document.getElementById('statVoiceOut');
+            if (vo) { vo.textContent = smartQuality.voiceOut; }
+            const vout = document.getElementById('statVideoOut');
+            if (vout) {
+                const curV = vout.textContent || '';
+                const sufV = curV.includes(' - ') ? curV.slice(curV.indexOf(' - ')) : '';
+                vout.textContent = smartQuality.videoOutLabel + sufV;
+            }
+            const aout = document.getElementById('statAudioOut');
+            if (aout) {
+                const curA = aout.textContent || '';
+                const sufA = curA.includes(' - ') ? curA.slice(curA.indexOf(' - ')) : '';
+                aout.textContent = smartQuality.audioOutLabel + sufA;
+            }
+        }
+
+        // Runs while in a call. Samples every peer's getStats, keeps the
+        // worst-case network signal, and steps the outgoing ladders with
+        // hysteresis (2 poor ticks to downgrade, 6 good ticks to upgrade).
+        async function evaluateSmartQuality() {
+            const peerIds = Object.keys(peers);
+            if (peerIds.length === 0 || hasLeftRoom) {
+                smartQuality.voiceIn = '--';
+                smartQuality.voiceOut = '--';
+                smartQuality.vPoor = 0; smartQuality.vGood = 0;
+                smartQuality.aPoor = 0; smartQuality.aGood = 0;
+                updateSmartQualityStatsUI();
+                return;
+            }
+            // Freeze a kind while its source is gone so silence can't drag
+            // the ladder down: no local live track means nothing meaningful
+            // is being sent, so hold the level until the source reappears.
+            let hasLocalVideo = false;
+            try {
+                const camT = (typeof localStream !== 'undefined' && localStream) ? localStream.getVideoTracks()[0] : null;
+                const scrT = (typeof screenStream !== 'undefined' && screenStream) ? screenStream.getVideoTracks()[0] : null;
+                hasLocalVideo = !!((camT && camT.readyState === 'live' && camT.enabled) || (scrT && scrT.readyState === 'live'));
+            } catch (e) {}
+            let hasLocalAudio = false;
+            try {
+                const micT = (typeof localStream !== 'undefined' && localStream) ? localStream.getAudioTracks()[0] : null;
+                const deaf = (typeof isDeafened !== 'undefined') ? isDeafened : false;
+                hasLocalAudio = !!(micT && micT.readyState === 'live' && micT.enabled) && !deaf;
+            } catch (e) {}
+            let worstLoss = 0, worstJit = 0, worstRtt = 0, minAvail = Infinity;
+            let videoLoss = 0;
+            let audioLoss = 0, audioJit = 0;
+            let inLossSum = 0, inLossN = 0, inJitSum = 0, inJitN = 0;
+            let outLossSum = 0, outLossN = 0;
+            let hasInboundAudio = false;
+            try {
+                for (const userId of peerIds) {
+                    const pc = peers[userId];
+                    if (!pc) continue;
+                    let stats;
+                    try { stats = await pc.getStats(); } catch (e) { continue; }
+                    stats.forEach(report => {
+                        if (report.type === 'candidate-pair' && (report.nominated || report.selected)) {
+                            if (typeof report.currentRoundTripTime === 'number') {
+                                const rttMs = report.currentRoundTripTime * 1000;
+                                if (rttMs > worstRtt) worstRtt = rttMs;
+                            }
+                            if (typeof report.availableOutgoingBitrate === 'number' && report.availableOutgoingBitrate > 0) {
+                                if (report.availableOutgoingBitrate < minAvail) minAvail = report.availableOutgoingBitrate;
+                            }
+                        } else if (report.type === 'inbound-rtp' && (report.kind === 'audio' || report.kind === 'video')) {
+                            const lost = report.packetsLost || 0;
+                            const recv = report.packetsReceived || 0;
+                            const total = lost + recv;
+                            const hasBytes = (report.bytesReceived || 0) > 0 || recv > 0;
+                            if (report.kind === 'audio' && hasBytes) hasInboundAudio = true;
+                            if (total > 20) {
+                                const pct = (lost / total) * 100;
+                                if (pct > worstLoss) worstLoss = pct;
+                                if (report.kind === 'video' && pct > videoLoss) videoLoss = pct;
+                                if (report.kind === 'audio') { inLossSum += pct; inLossN++; if (pct > audioLoss) audioLoss = pct; }
+                            }
+                            if (report.kind === 'audio' && report.jitter !== undefined && !isNaN(parseFloat(report.jitter))) {
+                                const jm = parseFloat(report.jitter) * 1000;
+                                if (jm > worstJit) worstJit = jm;
+                                if (jm > audioJit) audioJit = jm;
+                                inJitSum += jm; inJitN++;
+                            }
+                        } else if (report.type === 'remote-inbound-rtp' && report.kind === 'audio') {
+                            const lost = report.packetsLost || 0;
+                            const recv = report.packetsReceived || 0;
+                            const total = lost + recv;
+                            if (total > 20) { outLossSum += (lost / total) * 100; outLossN++; }
+                            if (report.jitter !== undefined && !isNaN(parseFloat(report.jitter))) {
+                                const jm = parseFloat(report.jitter) * 1000;
+                                if (jm > worstJit) worstJit = jm;
+                            }
                         }
-                    } catch (e) {
-                        console.warn("Failed to apply dynamic video constraints:", e);
-                    }
+                    });
                 }
+            } catch (e) { console.warn('SmartQuality sample failed', e); }
+
+            const peerCount = peerIds.length;
+            const isMobile = (typeof isMobileClient !== 'undefined' && isMobileClient);
+            // Crowded meshes cost CPU + uplink: fold peer count into the signal.
+            let crowdPressure = 0;
+            if (peerCount >= 8) crowdPressure = 2;
+            else if (peerCount >= 5) crowdPressure = 1;
+            if (isMobile && peerCount >= 4) crowdPressure = Math.max(crowdPressure, 1);
+
+            const availKbps = minAvail === Infinity ? null : Math.round(minAvail / 1000);
+            // Video reacts only to video + transport signals (never audio
+            // jitter). Mild single signals need corroboration: downgrade
+            // needs 2 of {loss, rtt, low uplink} or one extreme/crowd
+            // signal, sustained 3 ticks. This keeps a fresh estimator or a
+            // one-off RTT spike (e.g. 2 tabs on one machine) from tanking
+            // the webcam to Low.
+            const vLossBad = videoLoss > 8;
+            const vRttBad = worstRtt > 350;
+            const vAvailLow = availKbps !== null && availKbps < 700;
+            const vAvailSevere = availKbps !== null && availKbps < 300;
+            const vExtreme = videoLoss > 20 || worstRtt > 600 || vAvailSevere;
+            const vStrainedCrowd = crowdPressure >= 2
+                || (crowdPressure >= 1 && (videoLoss > 3 || worstRtt > 220));
+            const vMildVotes = (vLossBad ? 1 : 0) + (vRttBad ? 1 : 0) + (vAvailLow ? 1 : 0);
+            const poorVideo = vExtreme || vStrainedCrowd || vMildVotes >= 2;
+            const goodVideo = videoLoss < 2 && worstRtt < 200
+                && (availKbps === null || availKbps > 1000) && crowdPressure === 0;
+            // Audio needs far less bandwidth, so it uses its own lower
+            // uplink threshold and ignores crowd pressure entirely.
+            const aLossBad = audioLoss > 8;
+            const aJitBad = audioJit > 80;
+            const aRttBad = worstRtt > 350;
+            const aAvailBad = availKbps !== null && availKbps < 200;
+            const aExtreme = audioLoss > 20 || audioJit > 120 || worstRtt > 600;
+            const aMildVotes = (aLossBad ? 1 : 0) + (aJitBad ? 1 : 0) + (aRttBad ? 1 : 0) + (aAvailBad ? 1 : 0);
+            const poorAudio = aExtreme || aMildVotes >= 2;
+            const goodAudio = audioLoss < 2 && audioJit < 30 && worstRtt < 200
+                && (availKbps === null || availKbps > 250);
+
+            if (!hasLocalVideo) { smartQuality.vPoor = 0; smartQuality.vGood = 0; }
+            else if (poorVideo) { smartQuality.vPoor++; smartQuality.vGood = 0; }
+            else if (goodVideo) { smartQuality.vGood++; smartQuality.vPoor = 0; }
+            else { smartQuality.vPoor = 0; smartQuality.vGood = 0; }
+
+            if (!hasLocalAudio) { smartQuality.aPoor = 0; smartQuality.aGood = 0; }
+            else if (poorAudio) { smartQuality.aPoor++; smartQuality.aGood = 0; }
+            else if (goodAudio) { smartQuality.aGood++; smartQuality.aPoor = 0; }
+            else { smartQuality.aPoor = 0; smartQuality.aGood = 0; }
+
+            let changed = false;
+            if (hasLocalVideo && smartQuality.vPoor >= 3) {
+                if (smartQuality.videoLevel > 0) { smartQuality.videoLevel--; changed = true; }
+                smartQuality.vPoor = 0;
+            } else if (hasLocalVideo && smartQuality.vGood >= 3) {
+                if (smartQuality.videoLevel < 2) { smartQuality.videoLevel++; changed = true; }
+                smartQuality.vGood = 0;
+            }
+            if (hasLocalAudio && smartQuality.aPoor >= 3) {
+                if (smartQuality.audioLevel > 0) { smartQuality.audioLevel--; changed = true; }
+                smartQuality.aPoor = 0;
+            } else if (hasLocalAudio && smartQuality.aGood >= 3) {
+                if (smartQuality.audioLevel < 2) { smartQuality.audioLevel++; changed = true; }
+                smartQuality.aGood = 0;
+            }
+            // Crowd cap applies instantly to video only, and only while a
+            // local video source exists. It releases via the normal
+            // good-streak path when the room empties.
+            if (hasLocalVideo) {
+                const cap = crowdPressure >= 2 ? 0 : crowdPressure >= 1 ? 1 : 2;
+                if (smartQuality.videoLevel > cap) { smartQuality.videoLevel = cap; changed = true; }
+            }
+
+            const avgInLoss = inLossN ? inLossSum / inLossN : worstLoss;
+            const avgInJit = inJitN ? inJitSum / inJitN : worstJit;
+            const avgOutLoss = outLossN ? outLossSum / outLossN : worstLoss;
+            smartQuality.voiceIn = hasInboundAudio ? scoreVoiceQuality(avgInLoss, avgInJit, worstRtt) : '--';
+            smartQuality.voiceOut = hasLocalAudio ? scoreVoiceQuality(avgOutLoss, worstJit, worstRtt) : '--';
+
+            if (changed) {
+                console.log(`[SmartQuality] adjust video=${SQ_VIDEO[smartQuality.videoLevel].label} audio=${SQ_AUDIO[smartQuality.audioLevel].label} (vLoss=${videoLoss.toFixed(1)}% aLoss=${audioLoss.toFixed(1)}% rtt=${Math.round(worstRtt)}ms aJit=${Math.round(audioJit)}ms avail=${availKbps ?? 'n/a'}kbps peers=${peerCount})`);
+                updateAllSenderBitrates();
+            } else {
+                updateSmartQualityStatsUI();
             }
         }
 
-        function updateLowBandwidthBadgeVisibility() {
-            const lightning = document.getElementById('lowBandwidthLightning');
-            if (lightning) {
-                if (isLowBandwidthMode) {
-                    lightning.classList.remove('hidden');
-                } else {
-                    lightning.classList.add('hidden');
-                }
-            }
+        function startSmartQualityMonitor() {
+            if (smartQuality.monitorTimer) return;
+            smartQuality.monitorTimer = setInterval(evaluateSmartQuality, 3000);
         }
 
-        async function handleLowBandwidthChange(checked) {
-            isLowBandwidthMode = checked;
-            const setupLBM = document.getElementById('setupLowBandwidth');
-            const settingsLBM = document.getElementById('settingsLowBandwidth');
-            if (setupLBM) setupLBM.checked = checked;
-            if (settingsLBM) settingsLBM.checked = checked;
-            savePreferences();
-            updateLowBandwidthBadgeVisibility();
-            updateAllSenderBitrates();
-            await updateLocalVideoConstraints();
-            updateLocalLabel();
-
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'update-user',
-                    data: { isLowBandwidthMode: checked, profileRev: profileRev }
-                }));
-            }
+        function stopSmartQualityMonitor() {
+            if (smartQuality.monitorTimer) { clearInterval(smartQuality.monitorTimer); smartQuality.monitorTimer = null; }
         }
 
 
@@ -634,17 +799,7 @@
             const statPacketsSent = document.getElementById('statPacketsSent');
             const statPacketsReceived = document.getElementById('statPacketsReceived');
             const statPacketsLost = document.getElementById('statPacketsLost');
-            const statLowBandwidth = document.getElementById('statLowBandwidth');
-
-            if (statLowBandwidth) {
-                if (isLowBandwidthMode) {
-                    statLowBandwidth.textContent = 'Enabled';
-                    statLowBandwidth.className = 'stats-row-value text-amber-500 font-semibold';
-                } else {
-                    statLowBandwidth.textContent = 'Disabled';
-                    statLowBandwidth.className = 'stats-row-value text-zinc-400 font-normal';
-                }
-            }
+            updateSmartQualityStatsUI();
 
             const pingText = document.getElementById('pingText');
             if (pingText && statPing) {
@@ -656,10 +811,12 @@
             let totalPacketsReceived = 0;
             let totalPacketsLost = 0;
             let videoRes = '--';
-            let videoBitrate = '--';
+            let videoInBitrate = '--';
+            let videoOutBitrate = '--';
             let videoCodec = '--';
             let videoFrames = '--';
-            let audioBitrate = '--';
+            let audioInBitrate = '--';
+            let audioOutBitrate = '--';
             let audioCodec = '--';
             let jitter = '--';
 
@@ -686,7 +843,7 @@
                                 newStatsData[key] = { bytes: report.bytesReceived, timestamp: nowMs };
                                 const bitrate = calcBitrateKbps(key, report.bytesReceived, nowMs);
                                 if (bitrate > 0) {
-                                    videoBitrate = formatBitrate(bitrate);
+                                    videoInBitrate = formatBitrate(bitrate);
                                 }
                             }
                             totalPacketsReceived += report.packetsReceived || 0;
@@ -697,7 +854,7 @@
                                 newStatsData[key] = { bytes: report.bytesReceived, timestamp: nowMs };
                                 const bitrate = calcBitrateKbps(key, report.bytesReceived, nowMs);
                                 if (bitrate > 0) {
-                                    audioBitrate = formatBitrate(bitrate);
+                                    audioInBitrate = formatBitrate(bitrate);
                                 }
                             }
                             if (report.jitter && !isNaN(parseFloat(report.jitter))) {
@@ -719,8 +876,8 @@
                                 const key = report.id + '_sent';
                                 newStatsData[key] = { bytes: report.bytesSent, timestamp: nowMs };
                                 const bitrate = calcBitrateKbps(key, report.bytesSent, nowMs);
-                                if (bitrate > 0 && videoBitrate === '--') {
-                                    videoBitrate = formatBitrate(bitrate);
+                                if (bitrate > 0) {
+                                    videoOutBitrate = formatBitrate(bitrate);
                                 }
                             }
                             totalPacketsSent += report.packetsSent || 0;
@@ -729,8 +886,8 @@
                                 const key = report.id + '_sent';
                                 newStatsData[key] = { bytes: report.bytesSent, timestamp: nowMs };
                                 const bitrate = calcBitrateKbps(key, report.bytesSent, nowMs);
-                                if (bitrate > 0 && audioBitrate === '--') {
-                                    audioBitrate = formatBitrate(bitrate);
+                                if (bitrate > 0) {
+                                    audioOutBitrate = formatBitrate(bitrate);
                                 }
                             }
                             totalPacketsSent += report.packetsSent || 0;
@@ -752,10 +909,10 @@
 
             if (statJitter) statJitter.textContent = jitter;
             if (statVideoRes) statVideoRes.textContent = videoRes;
-            if (statVideoBitrate) statVideoBitrate.textContent = videoBitrate;
+            if (statVideoBitrate) statVideoBitrate.textContent = videoInBitrate !== '--' ? videoInBitrate : videoOutBitrate;
             if (statVideoCodec) statVideoCodec.textContent = videoCodec;
             if (statVideoFrames) statVideoFrames.textContent = videoFrames;
-            if (statAudioBitrate) statAudioBitrate.textContent = audioBitrate;
+            if (statAudioBitrate) statAudioBitrate.textContent = audioInBitrate !== '--' ? audioInBitrate : audioOutBitrate;
             if (statAudioCodec) statAudioCodec.textContent = audioCodec;
             if (statPacketsSent) statPacketsSent.textContent = totalPacketsSent.toLocaleString();
             if (statPacketsReceived) statPacketsReceived.textContent = totalPacketsReceived.toLocaleString();
@@ -1649,14 +1806,6 @@
                     if (data.facingMode) {
                         currentFacingMode = data.facingMode;
                     }
-                    if (data.isLowBandwidthMode !== undefined) {
-                        isLowBandwidthMode = data.isLowBandwidthMode;
-                        const setupLBM = document.getElementById('setupLowBandwidth');
-                        const settingsLBM = document.getElementById('settingsLowBandwidth');
-                        if (setupLBM) setupLBM.checked = isLowBandwidthMode;
-                        if (settingsLBM) settingsLBM.checked = isLowBandwidthMode;
-                        updateLowBandwidthBadgeVisibility();
-                    }
                 } catch (e) { console.error("Load pref error", e); }
             }
             try {
@@ -1769,8 +1918,7 @@
                     isMuted: isMuted,
                     isCamOff: isCamOff,
                     isDeafened: isDeafened,
-                    facingMode: currentFacingMode,
-                    isLowBandwidthMode: isLowBandwidthMode                }));
+                    facingMode: currentFacingMode                }));
             } catch(e) {
                 console.warn('Could not save preferences to localStorage:', e.message);
             }
@@ -1818,14 +1966,6 @@
             }
             if (status.isDeafened !== undefined) {
                 isDeafened = !!status.isDeafened;
-            }
-            if (status.isLowBandwidthMode !== undefined) {
-                isLowBandwidthMode = !!status.isLowBandwidthMode;
-                const setupLBM = document.getElementById('setupLowBandwidth');
-                const settingsLBM = document.getElementById('settingsLowBandwidth');
-                if (setupLBM) setupLBM.checked = isLowBandwidthMode;
-                if (settingsLBM) settingsLBM.checked = isLowBandwidthMode;
-                if (typeof updateLowBandwidthBadgeVisibility === 'function') updateLowBandwidthBadgeVisibility();
             }
             if (typeof updateLocalLabel === 'function') updateLocalLabel();
             savePreferences(false);
@@ -2976,6 +3116,8 @@
             }
 
             connectWs();
+            try { smartQuality.videoLevel = 2; smartQuality.audioLevel = 2; smartQuality.vPoor = 0; smartQuality.vGood = 0; smartQuality.aPoor = 0; smartQuality.aGood = 0; } catch (e) {}
+            startSmartQualityMonitor();
 
             sessionStorage.setItem('rustrooms_setup_done', 'true');
             sessionStorage.setItem('rustrooms_last_room_id', roomId);

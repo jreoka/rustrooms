@@ -2429,7 +2429,6 @@ mod tests {
                 is_muted: false,
                 is_deafened: false,
                 is_screen_sharing: false,
-                is_low_bandwidth_mode: false,
                 is_mobile: false,
                 profile_rev: 1,
             };

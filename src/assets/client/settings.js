@@ -45,8 +45,6 @@
             newAvatarCandidateIsGif = userAvatarIsGif;
             newAvatarCandidateStaticFrame = userAvatarStaticFrame;
 
-            const settingsLBM = document.getElementById('settingsLowBandwidth');
-            if (settingsLBM) settingsLBM.checked = isLowBandwidthMode;
 
             const removeBtn = document.getElementById('btnRemoveSettingsAvatar');
             if (userAvatar) {

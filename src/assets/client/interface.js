@@ -266,14 +266,6 @@
                 case 'unmute':
                     tone(659.25, 0, 0.11, 0.10, 739.99);
                     break;
-                case 'bandwidth_on':
-                    tone(523.25, 0, 0.14, 0.08);
-                    tone(783.99, 0.06, 0.20, 0.08);
-                    break;
-                case 'bandwidth_off':
-                    tone(783.99, 0, 0.14, 0.08);
-                    tone(523.25, 0.06, 0.20, 0.08);
-                    break;
             }
         }
 
@@ -1051,7 +1043,6 @@
                 peerScreenAudioTrackId = {};
                 peerCamVideoTrackId = {};
                 peerScreenVideoTrackId = {};
-                peerLowBandwidthStatus = {};
                 pendingCandidates = {};
                 remoteGrid.innerHTML = '';
 
@@ -1248,11 +1239,6 @@
                                         ` : `
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path></svg>
                                         `}
-                                    </div>
-                                ` : ''}
-                                ${u.isLowBandwidthMode ? `
-                                    <div class="status-icon active animate-pulse" style="color: #f59e0b;" title="Low Bandwidth Mode Active">
-                                        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                                     </div>
                                 ` : ''}
                             </div>
