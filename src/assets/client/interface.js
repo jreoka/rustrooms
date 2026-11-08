@@ -864,12 +864,6 @@
                     goBackFromSetup();
                     return;
                 }
-
-                const choiceOverlay = document.getElementById('choiceOverlay');
-                if (choiceOverlay && !choiceOverlay.classList.contains('hidden')) {
-                    goBackFromChoice();
-                    return;
-                }
                 return;
             }
 
@@ -1458,130 +1452,6 @@
         let inviteDurationTimer = null;
         let cameFromInviteOverlay = false;
 
-        /* ============================================================
-         * Choice screen — instead of dropping users straight into the
-         * setup screen, call links first ask: configure devices, or
-         * join right away with saved prefs?
-         *   - default:  show the choice screen
-         *   - ?join=1 (aliases ?skip, ?fast, ?instant): join instantly
-         *   - ?setup=1: go straight to the setup screen
-         * ============================================================ */
-        function joinRequested() {
-            try {
-                const params = new URLSearchParams(window.location.search);
-                if (params.has('setup')) return false;
-                return params.has('join') || params.has('skip')
-                    || params.has('fast') || params.has('instant');
-            } catch (e) { return false; }
-        }
-        function setupRequested() {
-            try {
-                return new URLSearchParams(window.location.search).has('setup');
-            } catch (e) { return false; }
-        }
-
-        let cameFromChoiceOverlay = false;
-
-        function showChoiceOverlay() {
-            try { sessionStorage.setItem('rustrooms_welcomed', 'true'); } catch (e) {}
-            const choiceOverlay = document.getElementById('choiceOverlay');
-            if (!choiceOverlay) {
-                showOverlayAnimated(configOverlay);
-                initSetupButtonTouchHandlers();
-                loadDevices();
-                return;
-            }
-            showOverlayAnimated(choiceOverlay);
-        }
-
-        // "Configure devices" — choice screen -> setup screen.
-        function proceedToSetupFromChoice() {
-            cameFromChoiceOverlay = true;
-            try { sessionStorage.setItem('rustrooms_welcomed', 'true'); } catch (e) {}
-            const choiceOverlay = document.getElementById('choiceOverlay');
-            const showSetup = () => {
-                showOverlayAnimated(configOverlay);
-                initSetupButtonTouchHandlers();
-                loadDevices();
-            };
-            if (choiceOverlay && !choiceOverlay.classList.contains('hidden')) {
-                choiceOverlay.classList.remove('overlay-enter');
-                choiceOverlay.classList.add('opacity-0', 'overlay-exit');
-                setTimeout(() => {
-                    choiceOverlay.classList.add('hidden');
-                    choiceOverlay.classList.remove('opacity-0', 'overlay-exit');
-                    showSetup();
-                }, OVERLAY_MS);
-            } else {
-                showSetup();
-            }
-        }
-        window.proceedToSetupFromChoice = proceedToSetupFromChoice;
-
-        function goBackFromChoice() {
-            const choiceOverlay = document.getElementById('choiceOverlay');
-            const userList = document.getElementById('inviteUserList');
-            const stageList = document.getElementById('inviteStageList');
-            const hasInviteUsers = (userList && userList.children.length > 0)
-                || (stageList && stageList.children.length > 0);
-            cameFromChoiceOverlay = false;
-            const done = () => {
-                if (hasInviteUsers) {
-                    const inviteOverlay = document.getElementById('inviteWelcomeOverlay');
-                    showOverlayAnimated(inviteOverlay);
-                    if (typeof updateInviteOverlay === 'function') updateInviteOverlay();
-                } else if (window.history.length > 1 && document.referrer && document.referrer.includes(window.location.host) && !document.referrer.includes(window.location.pathname)) {
-                    window.history.back();
-                } else {
-                    window.location.href = '/';
-                }
-            };
-            if (choiceOverlay && !choiceOverlay.classList.contains('hidden')) {
-                choiceOverlay.classList.remove('overlay-enter');
-                choiceOverlay.classList.add('opacity-0', 'overlay-exit');
-                setTimeout(() => {
-                    choiceOverlay.classList.add('hidden');
-                    choiceOverlay.classList.remove('opacity-0', 'overlay-exit');
-                    done();
-                }, OVERLAY_MS);
-            } else {
-                done();
-            }
-        }
-        window.goBackFromChoice = goBackFromChoice;
-
-        // Join immediately with saved prefs, bypassing invite + setup.
-        // If devices aren't warmed up yet, load them first (same path
-        // as the returning-user auto-join below).
-        function quickJoin() {
-            try { sessionStorage.setItem('rustrooms_welcomed', 'true'); } catch (e) {}
-            if (inviteDurationTimer) {
-                clearInterval(inviteDurationTimer);
-                inviteDurationTimer = null;
-            }
-            cameFromInviteOverlay = false;
-            cameFromChoiceOverlay = false;
-            const inviteOverlay = document.getElementById('inviteWelcomeOverlay');
-            if (inviteOverlay) {
-                inviteOverlay.classList.add('hidden', 'opacity-0');
-                inviteOverlay.classList.remove('overlay-enter');
-            }
-            const choiceOverlay = document.getElementById('choiceOverlay');
-            if (choiceOverlay) {
-                choiceOverlay.classList.add('hidden', 'opacity-0');
-                choiceOverlay.classList.remove('overlay-enter');
-            }
-            const btnJoin = document.getElementById('btnJoin');
-            const devicesReady = !!(btnJoin && !btnJoin.disabled)
-                || (typeof localStream !== 'undefined' && !!localStream);
-            if (devicesReady) {
-                joinRoom();
-            } else {
-                loadDevices().then(() => joinRoom()).catch(() => joinRoom());
-            }
-        }
-        window.quickJoin = quickJoin;
-
         function proceedToSetup() {
             cameFromInviteOverlay = true;
             if (inviteDurationTimer) {
@@ -1615,22 +1485,6 @@
             if (typeof localStream !== 'undefined' && localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
-            }
-
-            // Came from the choice screen — go back to it.
-            if (cameFromChoiceOverlay) {
-                cameFromChoiceOverlay = false;
-                const configPanel = document.getElementById('configPanel');
-                if (configPanel) configPanel.classList.add('panel-pop-away');
-                configOverlay.classList.remove('overlay-enter');
-                configOverlay.classList.add('opacity-0', 'overlay-exit');
-                setTimeout(() => {
-                    configOverlay.classList.add('hidden');
-                    configOverlay.classList.remove('opacity-0', 'overlay-exit');
-                    if (configPanel) configPanel.classList.remove('panel-pop-away');
-                    showOverlayAnimated(document.getElementById('choiceOverlay'));
-                }, OVERLAY_MS);
-                return;
             }
 
             const inviteOverlay = document.getElementById('inviteWelcomeOverlay');
@@ -1667,12 +1521,6 @@
         async function updateInviteOverlay() {
             if (!roomId || !channelId) return;
             if (sessionStorage.getItem('rustrooms_welcomed') === 'true') return;
-            // ?join=1: bypass invite + setup entirely.
-            if (joinRequested()) {
-                sessionStorage.setItem('rustrooms_welcomed', 'true');
-                loadDevices().then(() => joinRoom());
-                return;
-            }
             
             try {
                 const res = await fetch(`/${encodeURIComponent(roomId)}/${encodeURIComponent(channelId)}/status`);
@@ -1682,7 +1530,10 @@
                 
                 const uids = Object.keys(data.users);
                 if (uids.length === 0) {
-                    showChoiceOverlay();
+                    sessionStorage.setItem('rustrooms_welcomed', 'true');
+                    showOverlayAnimated(configOverlay);
+                    initSetupButtonTouchHandlers();
+                    loadDevices();
                     return;
                 }
                 
@@ -1752,8 +1603,8 @@
                 
             } catch (e) {
                 console.error("Error fetching status", e);
-                // Fallback to the choice screen
-                showChoiceOverlay();
+                // Fallback to setup screen
+                showOverlayAnimated(configOverlay);
             }
         }
 
@@ -1785,16 +1636,12 @@
                 const setupDone = sessionStorage.getItem('rustrooms_setup_done') === 'true';
                 const welcomed = sessionStorage.getItem('rustrooms_welcomed') === 'true';
 
-                if (joinRequested()) {
+                if (setupDone && roomId) {
                     loadDevices().then(() => joinRoom());
-                } else if (setupDone && roomId) {
-                    loadDevices().then(() => joinRoom());
-                } else if (setupRequested()) {
+                } else if (welcomed) {
                     showOverlayAnimated(configOverlay);
                     initSetupButtonTouchHandlers();
                     loadDevices();
-                } else if (welcomed) {
-                    showChoiceOverlay();
                 } else {
                     updateInviteOverlay();
                 }
