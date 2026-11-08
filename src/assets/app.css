@@ -2106,11 +2106,12 @@ video.active + .avatar-layer { display: none !important; }
     color: #fff;
     background: var(--accent);
 }
-.knock-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.knock-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; }
 .knock-row + .knock-row { border-top: 1px solid var(--border-subtle); }
-.knock-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.knock-who { flex: 1 1 120px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .knock-name { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.knock-meta { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.knock-meta { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.knock-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; flex-shrink: 0; }
 .knock-btn {
     padding: 5px 10px;
     border-radius: 8px;
@@ -2120,6 +2121,8 @@ video.active + .avatar-layer { display: none !important; }
     border: 1px solid var(--border-subtle);
     background: var(--bg-tertiary);
     color: var(--text-primary);
+    white-space: nowrap;
+    flex-shrink: 0;
     transition: border-color 0.15s, background 0.15s;
 }
 .knock-btn.approve { background: var(--accent); border-color: var(--accent); color: #fff; }

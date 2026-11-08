@@ -3352,16 +3352,21 @@
             }
             panel.style.display = '';
             if (count) count.textContent = pendingKnocks.length;
-            list.innerHTML = pendingKnocks.map(k => `
+            list.innerHTML = pendingKnocks.map(k => {
+                const name = k.nickname || 'Guest';
+                const meta = k.channel ? `wants to join #${k.channel}` : '';
+                return `
                 <div class="knock-row">
                     <div class="knock-who">
-                        <span class="knock-name">${escapeHtml(k.nickname || 'Guest')}</span>
-                        ${k.channel ? `<span class="knock-meta">wants to join #${escapeHtml(k.channel)}</span>` : ''}
+                        <span class="knock-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                        ${k.channel ? `<span class="knock-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>` : ''}
                     </div>
-                    <button class="knock-btn approve" onclick="respondKnock('${k.id}', true)">Let in</button>
-                    <button class="knock-btn deny" onclick="respondKnock('${k.id}', false)">Deny</button>
-                    <button class="knock-btn block" onclick="respondKnockBlock('${k.id}')">Block</button>
-                </div>`).join('');
+                    <div class="knock-actions">
+                        <button class="knock-btn approve" onclick="respondKnock('${k.id}', true)">Let in</button>
+                        <button class="knock-btn deny" onclick="respondKnock('${k.id}', false)">Deny</button>
+                        <button class="knock-btn block" onclick="respondKnockBlock('${k.id}')">Block</button>
+                    </div>
+                </div>`; }).join('');
         }
 
         function respondKnock(userId, approve) {
