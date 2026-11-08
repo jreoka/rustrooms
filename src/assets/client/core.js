@@ -3031,10 +3031,20 @@
             if (setupMeterFrameId) cancelAnimationFrame(setupMeterFrameId);
             const configPanel = document.getElementById('configPanel');
             if (configPanel) configPanel.classList.add('panel-pop-away');
-            configOverlay.classList.remove('overlay-enter');
-            configOverlay.classList.add('opacity-0', 'pointer-events-none', 'overlay-exit');
+            // Quick/auto join can start from the invite screen, where the
+            // setup overlay was never shown — dismiss both regardless.
+            const inviteOverlay = document.getElementById('inviteWelcomeOverlay');
+            if (inviteOverlay) inviteOverlay.classList.add('hidden', 'opacity-0');
+            const choiceOverlay = document.getElementById('choiceOverlay');
+            if (choiceOverlay) choiceOverlay.classList.add('hidden', 'opacity-0');
+            if (typeof configOverlay !== 'undefined' && configOverlay) {
+                configOverlay.classList.remove('overlay-enter');
+                configOverlay.classList.add('opacity-0', 'pointer-events-none', 'overlay-exit');
+            }
             setTimeout(() => {
-                configOverlay.style.display = 'none';
+                if (typeof configOverlay !== 'undefined' && configOverlay) {
+                    configOverlay.style.display = 'none';
+                }
                 if (configPanel) configPanel.classList.remove('panel-pop-away');
                 const mainApp = document.querySelector('main');
                 const taskbar = document.querySelector('.taskbar');

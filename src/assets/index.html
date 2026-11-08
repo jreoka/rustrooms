@@ -222,10 +222,34 @@
                 </div>
             </div>
 
-            <div class="pt-4">
+            <div class="pt-4 space-y-3">
                 <button onclick="proceedToSetup()" class="btn-primary w-full py-4 rounded-lg font-bold text-lg transition-all shadow-lg hover:shadow-indigo-500/20 group">
                     <span id="inviteJoinLabel">Join Conversation</span>
                     <svg class="inline-block ml-2 w-5 h-5 transition-transform group-hover:translate-x-1" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                </button>
+                <button onclick="quickJoin()" class="w-full py-2 text-sm font-medium transition-all" style="color: var(--text-muted);" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-muted)'" title="Join instantly with your saved devices, skipping the setup screen">
+                    Quick join &rarr;
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="choiceOverlay" class="fixed inset-0 z-[75] flex flex-col items-center justify-center p-4 transition-opacity duration-300 hidden opacity-0" style="background: var(--bg-primary);">
+        <div class="glass-panel p-8 md:p-12 rounded-3xl max-w-md w-full relative z-10 text-center space-y-8">
+            <button onclick="goBackFromChoice()" class="setup-back-btn absolute top-5 left-5 md:top-6 md:left-6 transition-all flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold z-20" title="Go back" aria-label="Go back">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                <span>Back</span>
+            </button>
+            <div class="space-y-3">
+                <h1 class="text-3xl md:text-4xl font-bold tracking-tight" style="color: var(--text-primary);">Configure your devices?</h1>
+                <p style="color: var(--text-secondary);" class="text-sm font-normal opacity-80">Set up your camera, microphone and nickname first &mdash; or join right away with your saved devices.</p>
+            </div>
+            <div class="space-y-3">
+                <button onclick="proceedToSetupFromChoice()" class="btn-primary w-full py-4 rounded-lg font-bold text-lg transition-all shadow-lg hover:shadow-indigo-500/20">
+                    Configure devices
+                </button>
+                <button onclick="quickJoin()" class="btn-secondary w-full py-3.5 rounded-lg font-medium transition-all">
+                    Join now
                 </button>
             </div>
         </div>
