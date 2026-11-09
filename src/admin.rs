@@ -1,5 +1,12 @@
+use crate::distributed::distributed_broadcast;
+use crate::state::{
+    AppState, DistributedMessage, PersistedState, ResumeRecord, RoomAdmin, SignalMessage,
+    current_unix_secs,
+};
+use axum::extract::ws::Message;
 use hmac::{Hmac, Mac, digest::KeyInit};
 use sha2::Sha256;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -46,85 +53,7 @@ pub(crate) fn verify_key(secret: &[u8], room_id: &str, key: &str, stored_hash: &
     constant_time_eq(candidate.as_bytes(), stored_hash.as_bytes())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SECRET: &[u8] = b"test-secret-test-secret-32byte";
-
-    #[test]
-    fn issued_key_verifies_for_its_room() {
-        let key = issue_key();
-        let hash = key_hash(SECRET, "room-a", &key);
-        assert!(verify_key(SECRET, "room-a", &key, &hash));
-    }
-
-    #[test]
-    fn key_does_not_verify_for_another_room() {
-        let key = issue_key();
-        let hash = key_hash(SECRET, "room-a", &key);
-        assert!(!verify_key(SECRET, "room-b", &key, &hash));
-    }
-
-    #[test]
-    fn wrong_key_and_wrong_secret_fail() {
-        let key = issue_key();
-        let hash = key_hash(SECRET, "room-a", &key);
-        assert!(!verify_key(SECRET, "room-a", &issue_key(), &hash));
-        assert!(!verify_key(b"other-secret-other-secret-32by", "room-a", &key, &hash));
-        assert!(!verify_key(SECRET, "room-a", "", &hash));
-    }
-
-    #[test]
-    fn issued_keys_are_unique() {
-        assert_ne!(issue_key(), issue_key());
-    }
-
-    #[tokio::test]
-    async fn validate_room_resume_token_allows_channel_switch() {
-        let state = AppState {
-            rooms: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            room_cleanup_generations: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            room_creation_password: None,
-            distributed_tx: tokio::sync::broadcast::channel(16).0,
-            remote_users: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            remote_user_owners: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            channel_creation_times: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            allowed_url: None,
-            recent_distributed_msg_ids: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
-            distributed_msg_history: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
-            node_id: uuid::Uuid::new_v4().to_string(),
-            admin_rooms: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            cluster_key: None,
-            p2p_runtime: None,
-            resume_records: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            away_seats: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            departure_gen: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
-            server_secret: std::sync::Arc::new(vec![7u8; 32]),
-        };
-
-        let room_id = "test-room";
-        let user_id = uuid::Uuid::new_v4().to_string();
-        let token = issue_resume_token(&state, room_id, &user_id, "General").await;
-
-        // Validate directly in same channel
-        assert!(validate_resume_token(&state, room_id, &user_id, "General", Some(&token)).await);
-
-        // Validate when switching to a different channel in the same room
-        assert!(validate_room_resume_token(&state, room_id, &user_id, "Lounge", Some(&token)).await);
-
-        // Revoke token and verify both reject
-        delete_resume_token(&state, room_id, &user_id).await;
-        assert!(!validate_resume_token(&state, room_id, &user_id, "General", Some(&token)).await);
-        assert!(!validate_room_resume_token(&state, room_id, &user_id, "Lounge", Some(&token)).await);
-    }
-}
-
 // ---- Room admin messaging helpers (used by rooms.rs and distributed.rs) ----
-
-use crate::distributed::distributed_broadcast;
-use crate::state::{AppState, DistributedMessage, ResumeRecord, RoomAdmin, SignalMessage};
-use axum::extract::ws::Message;
 
 pub(crate) fn signal_text(msg_type: &str, user_id: Option<String>, data: Option<serde_json::Value>) -> String {
     serde_json::to_string(&SignalMessage {
@@ -291,9 +220,6 @@ pub(crate) async fn send_knock_update(state: &AppState, room_id: &str) {
 
 // ---- Persistence (restarts / rollouts keep admin state) ----
 
-use crate::state::PersistedState;
-use std::path::PathBuf;
-
 pub(crate) fn state_file_path() -> PathBuf {
     std::env::var("RUSTROOMS_STATE_FILE")
         .ok()
@@ -326,10 +252,7 @@ pub(crate) async fn persist_state(state: &AppState) {
             .map(|(id, a)| (id.clone(), a.to_persisted()))
             .collect()
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = current_unix_secs();
     let resume: std::collections::HashMap<String, std::collections::HashMap<String, ResumeRecord>> = {
         let lock = state.resume_records.lock().await;
         let mut out: std::collections::HashMap<
@@ -384,13 +307,6 @@ pub(crate) fn resume_grace_secs() -> u64 {
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|v| (1..=600).contains(v))
         .unwrap_or(15)
-}
-
-pub(crate) fn current_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 fn resume_token_hash(token: &str) -> String {
@@ -603,4 +519,78 @@ pub(crate) async fn delete_resume_token(state: &AppState, room_id: &str, user_id
         },
     );
     persist_state(state).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: &[u8] = b"test-secret-test-secret-32byte";
+
+    #[test]
+    fn issued_key_verifies_for_its_room() {
+        let key = issue_key();
+        let hash = key_hash(SECRET, "room-a", &key);
+        assert!(verify_key(SECRET, "room-a", &key, &hash));
+    }
+
+    #[test]
+    fn key_does_not_verify_for_another_room() {
+        let key = issue_key();
+        let hash = key_hash(SECRET, "room-a", &key);
+        assert!(!verify_key(SECRET, "room-b", &key, &hash));
+    }
+
+    #[test]
+    fn wrong_key_and_wrong_secret_fail() {
+        let key = issue_key();
+        let hash = key_hash(SECRET, "room-a", &key);
+        assert!(!verify_key(SECRET, "room-a", &issue_key(), &hash));
+        assert!(!verify_key(b"other-secret-other-secret-32by", "room-a", &key, &hash));
+        assert!(!verify_key(SECRET, "room-a", "", &hash));
+    }
+
+    #[test]
+    fn issued_keys_are_unique() {
+        assert_ne!(issue_key(), issue_key());
+    }
+
+    #[tokio::test]
+    async fn validate_room_resume_token_allows_channel_switch() {
+        let state = AppState {
+            rooms: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            room_cleanup_generations: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            room_creation_password: None,
+            distributed_tx: tokio::sync::broadcast::channel(16).0,
+            remote_users: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            remote_user_owners: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            channel_creation_times: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            allowed_url: None,
+            recent_distributed_msg_ids: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+            distributed_msg_history: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
+            node_id: uuid::Uuid::new_v4().to_string(),
+            admin_rooms: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            cluster_key: None,
+            p2p_runtime: None,
+            resume_records: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            away_seats: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            departure_gen: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            server_secret: std::sync::Arc::new(vec![7u8; 32]),
+        };
+
+        let room_id = "test-room";
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let token = issue_resume_token(&state, room_id, &user_id, "General").await;
+
+        // Validate directly in same channel
+        assert!(validate_resume_token(&state, room_id, &user_id, "General", Some(&token)).await);
+
+        // Validate when switching to a different channel in the same room
+        assert!(validate_room_resume_token(&state, room_id, &user_id, "Lounge", Some(&token)).await);
+
+        // Revoke token and verify both reject
+        delete_resume_token(&state, room_id, &user_id).await;
+        assert!(!validate_resume_token(&state, room_id, &user_id, "General", Some(&token)).await);
+        assert!(!validate_room_resume_token(&state, room_id, &user_id, "Lounge", Some(&token)).await);
+    }
 }
