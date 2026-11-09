@@ -1166,17 +1166,29 @@
         // driven by a JS-managed .pressed class (see app.css) whose lifecycle is
         // fully controlled here, so it can never get stuck.
         document.addEventListener('touchstart', (e) => {
-            const btn = e.target.closest('.control-btn');
+            const btn = e.target.closest('.control-btn, .btn-secondary, .btn-primary, .btn-icon-test, .setup-back-btn, .knock-btn, .modal-content button');
             if (btn && !btn.disabled) btn.classList.add('pressed');
         }, { passive: true });
         ['touchend', 'touchcancel'].forEach(evt => {
             document.addEventListener(evt, () => {
-                document.querySelectorAll('.control-btn.pressed')
-                    .forEach(b => b.classList.remove('pressed'));
+                document.querySelectorAll('.pressed, .is-pressed')
+                    .forEach(b => {
+                        b.classList.remove('pressed');
+                        b.classList.remove('is-pressed');
+                    });
                 const el = document.activeElement;
                 if (el && el.tagName === 'BUTTON') el.blur();
             }, { passive: true });
         });
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (btn) {
+                btn.classList.remove('pressed', 'is-pressed');
+                if (window.matchMedia && !window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+                    btn.blur();
+                }
+            }
+        }, { passive: true });
 
         async function loadDevices() {
             const btnJoin = document.getElementById('btnJoin');
@@ -2844,6 +2856,11 @@
                     isDeafened = false;
                 }
                 updatePreviewButtons();
+                const btnMic = document.getElementById('btnPreviewMic');
+                if (btnMic) {
+                    btnMic.classList.remove('pressed', 'is-pressed');
+                    btnMic.blur();
+                }
                 savePreferences();
             }
         }
@@ -2866,6 +2883,7 @@
                         btnCam.innerText = "Stop Cam";
                         document.getElementById('previewPlaceholder').style.display = 'none';
                     }
+                    btnCam.classList.remove('pressed', 'is-pressed');
                     btnCam.blur();
                  }
                  savePreferences();
@@ -2896,6 +2914,10 @@
 
                  btnCam.disabled = false;
                  updatePreviewButtons();
+                 if (btnCam) {
+                     btnCam.classList.remove('pressed', 'is-pressed');
+                     btnCam.blur();
+                 }
                  savePreferences();
              } else {
 
@@ -2948,6 +2970,11 @@
                          console.error("Could not add camera", e);
                          showCustomAlert("Camera", "Could not access camera. Please check permissions.");
                          updatePreviewButtons();
+                     } finally {
+                         if (btnCam) {
+                             btnCam.classList.remove('pressed', 'is-pressed');
+                             btnCam.blur();
+                         }
                      }
                  })();
              }
@@ -3483,8 +3510,32 @@
             const panel = document.getElementById('knockPanel');
             const list = document.getElementById('knockList');
             const count = document.getElementById('knockCount');
+            const badge = document.getElementById('sidebarKnockBadge');
+
+            const hasKnocks = iAmAdmin() && pendingKnocks.length > 0;
+            if (badge) {
+                if (hasKnocks) {
+                    badge.textContent = pendingKnocks.length > 99 ? '99+' : pendingKnocks.length;
+                    badge.style.display = 'inline-flex';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+
+            const toggleBtn = document.getElementById('sidebarToggle');
+            if (toggleBtn) {
+                if (hasKnocks) {
+                    const reqWord = pendingKnocks.length === 1 ? 'request' : 'requests';
+                    toggleBtn.setAttribute('title', `Channels (${pendingKnocks.length} join ${reqWord})`);
+                    toggleBtn.setAttribute('aria-label', `Channels, ${pendingKnocks.length} join ${reqWord}`);
+                } else {
+                    toggleBtn.setAttribute('title', 'Channels');
+                    toggleBtn.setAttribute('aria-label', 'Channels');
+                }
+            }
+
             if (!panel || !list) return;
-            if (!iAmAdmin() || pendingKnocks.length === 0) {
+            if (!hasKnocks) {
                 panel.style.display = 'none';
                 return;
             }

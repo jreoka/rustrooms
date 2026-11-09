@@ -284,11 +284,21 @@ body {
     font-weight: 600;
     border-radius: var(--radius-md) !important;
 }
-.btn-primary:hover {
-    background: var(--accent-hover);
-    filter: none;
+@media (hover: hover) and (pointer: fine) {
+    .btn-primary:hover {
+        background: var(--accent-hover);
+        filter: none;
+    }
+    .btn-primary:active {
+        background: color-mix(in srgb, var(--accent) 82%, black);
+        transform: scale(0.97);
+    }
+    .btn-primary.btn-danger:hover {
+        background: var(--danger-hover);
+    }
 }
-.btn-primary:active {
+.btn-primary.pressed,
+.btn-primary.is-pressed {
     background: color-mix(in srgb, var(--accent) 82%, black);
     transform: scale(0.97);
 }
@@ -305,9 +315,6 @@ body {
 .btn-primary.btn-danger {
     background: var(--md-error);
     color: #FFFFFF;
-}
-.btn-primary.btn-danger:hover {
-    background: var(--danger-hover);
 }
 
 .btn-secondary {
@@ -331,13 +338,31 @@ body {
     transition: background 0.15s var(--ease-standard), border-color 0.15s var(--ease-standard), transform 0.1s ease;
     -webkit-tap-highlight-color: transparent;
 }
-.btn-secondary:hover {
-    background: color-mix(in srgb, var(--md-on-surface) 6%, transparent);
-    border-color: var(--md-outline);
+@media (hover: hover) and (pointer: fine) {
+    .btn-secondary:hover {
+        background: color-mix(in srgb, var(--md-on-surface) 6%, transparent);
+        border-color: var(--md-outline);
+    }
+    .btn-secondary:active {
+        background: color-mix(in srgb, var(--md-on-surface) 14%, transparent);
+        transform: scale(0.97);
+    }
+    .btn-secondary.active-red:hover {
+        background: var(--md-error-container);
+        border-color: var(--md-error-container);
+        color: var(--md-on-error-container);
+    }
 }
-.btn-secondary:active,
+.btn-secondary.pressed,
 .btn-secondary.is-pressed {
     background: color-mix(in srgb, var(--md-on-surface) 14%, transparent);
+    transform: scale(0.97);
+}
+.btn-secondary.active-red.pressed,
+.btn-secondary.active-red.is-pressed {
+    background: var(--md-error-container);
+    border-color: var(--md-error-container);
+    color: var(--md-on-error-container);
     transform: scale(0.97);
 }
 .btn-secondary:focus-visible {
@@ -349,11 +374,6 @@ body {
     color: var(--md-on-error);
     border-color: var(--md-error);
 }
-.btn-secondary.active-red:hover {
-    background: var(--md-error-container);
-    border-color: var(--md-error-container);
-    color: var(--md-on-error-container);
-}
 
 .btn-icon-test {
     background: var(--md-surface-container-high);
@@ -363,8 +383,15 @@ body {
     -webkit-tap-highlight-color: transparent;
     transition: background 0.15s var(--ease-standard);
 }
-.btn-icon-test:hover {
+@media (hover: hover) and (pointer: fine) {
+    .btn-icon-test:hover {
+        background: var(--md-surface-container-highest);
+    }
+}
+.btn-icon-test.pressed,
+.btn-icon-test.is-pressed {
     background: var(--md-surface-container-highest);
+    transform: scale(0.96);
 }
 
 /* Filled/outlined buttons inside dialogs */
@@ -391,17 +418,26 @@ body {
     background: var(--md-error) !important;
     color: #FFFFFF !important;
 }
-.modal-content .btn-secondary:hover {
-    background: var(--md-surface-container-highest) !important;
+@media (hover: hover) and (pointer: fine) {
+    .modal-content .btn-secondary:hover {
+        background: var(--md-surface-container-highest) !important;
+    }
+    .modal-content .btn-primary:hover {
+        background: var(--accent-hover) !important;
+    }
+    .modal-content .btn-primary.btn-danger:hover {
+        background: var(--danger-hover) !important;
+    }
+    .modal-content .btn-primary:active,
+    .modal-content .btn-secondary:active {
+        filter: brightness(0.92);
+        transform: scale(0.97);
+    }
 }
-.modal-content .btn-primary:hover {
-    background: var(--accent-hover) !important;
-}
-.modal-content .btn-primary.btn-danger:hover {
-    background: var(--danger-hover) !important;
-}
-.modal-content .btn-primary:active,
-.modal-content .btn-secondary:active {
+.modal-content .btn-primary.pressed,
+.modal-content .btn-primary.is-pressed,
+.modal-content .btn-secondary.pressed,
+.modal-content .btn-secondary.is-pressed {
     filter: brightness(0.92);
     transform: scale(0.97);
 }
@@ -2074,13 +2110,43 @@ video.active + .avatar-layer { display: none !important; }
         left: 24px;
     }
 }
-.setup-back-btn:hover {
+@media (hover: hover) and (pointer: fine) {
+    .setup-back-btn:hover {
+        background: color-mix(in srgb, var(--accent) 15%, var(--bg-tertiary));
+        border-color: var(--accent);
+        color: var(--text-primary);
+    }
+    .setup-back-btn:active {
+        transform: scale(0.96);
+    }
+}
+.setup-back-btn.pressed,
+.setup-back-btn.is-pressed {
     background: color-mix(in srgb, var(--accent) 15%, var(--bg-tertiary));
     border-color: var(--accent);
     color: var(--text-primary);
-}
-.setup-back-btn:active {
     transform: scale(0.96);
+}
+
+.sidebar-knock-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 9999px;
+    background: var(--md-error);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 2px var(--bg-primary);
+    pointer-events: none;
+    z-index: 10;
 }
 
 .knock-panel {

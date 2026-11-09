@@ -1651,11 +1651,9 @@
         }
 
         function initSetupButtonTouchHandlers() {
-            const btnPreviewMic = document.getElementById('btnPreviewMic');
-            const btnPreviewCam = document.getElementById('btnPreviewCam');
-            const speakerTestButtons = document.querySelectorAll('.btn-icon-test');
+            const buttons = document.querySelectorAll('#configPanel button, #settingsPanel button, .btn-secondary, .btn-primary, .btn-icon-test, .setup-back-btn');
 
-            [btnPreviewMic, btnPreviewCam].forEach(btn => {
+            buttons.forEach(btn => {
                 if (btn && !btn.dataset.touchInit) {
                     btn.dataset.touchInit = '1';
                     btn.addEventListener('touchstart', function() {
@@ -1663,24 +1661,11 @@
                     }, { passive: true });
                     btn.addEventListener('touchend', function() {
                         this.classList.remove('is-pressed');
+                        this.blur();
                     }, { passive: true });
                     btn.addEventListener('touchcancel', function() {
                         this.classList.remove('is-pressed');
-                    }, { passive: true });
-                }
-            });
-
-            speakerTestButtons.forEach(btn => {
-                if (btn && !btn.dataset.touchInit) {
-                    btn.dataset.touchInit = '1';
-                    btn.addEventListener('touchstart', function() {
-                        this.classList.add('is-pressed');
-                    }, { passive: true });
-                    btn.addEventListener('touchend', function() {
-                        this.classList.remove('is-pressed');
-                    }, { passive: true });
-                    btn.addEventListener('touchcancel', function() {
-                        this.classList.remove('is-pressed');
+                        this.blur();
                     }, { passive: true });
                 }
             });
