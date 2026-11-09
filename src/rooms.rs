@@ -1774,6 +1774,51 @@ pub(crate) async fn handle_socket(
                                 let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
                                 continue;
                             }
+
+                            if action == "toggle-lobby" || action == "set-lobby" {
+                                let mut changed = false;
+                                let mut approved_ptxs = Vec::new();
+                                {
+                                    let mut lock = state.admin_rooms.lock().await;
+                                    if let Some(a) = lock.get_mut(&room_id) {
+                                        let new_lobby = if action == "set-lobby" {
+                                            parsed
+                                                .data
+                                                .as_ref()
+                                                .and_then(|d| d.get("lobby"))
+                                                .and_then(|v| v.as_bool())
+                                                .unwrap_or(!a.lobby)
+                                        } else {
+                                            !a.lobby
+                                        };
+                                        if a.lobby != new_lobby {
+                                            a.lobby = new_lobby;
+                                            changed = true;
+                                            if !new_lobby {
+                                                for (target_uid, p) in a.pending.drain() {
+                                                    a.approved.insert(target_uid);
+                                                    approved_ptxs.push(p.tx);
+                                                }
+                                                a.remote_pending.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                                for ptx in approved_ptxs {
+                                    let msg = crate::admin::signal_text(
+                                        "knock-approved",
+                                        None,
+                                        None,
+                                    );
+                                    let _ = ptx.try_send(Ok(Message::Text(msg.into())));
+                                }
+                                if changed {
+                                    crate::admin::broadcast_admin_update(&state, &room_id).await;
+                                    crate::admin::send_knock_update(&state, &room_id).await;
+                                }
+                                continue;
+                            }
+
                             let Some(target) = target else { continue };
 
                             match action.as_str() {
@@ -2984,7 +3029,7 @@ pub(crate) async fn channel_status(
 
     // The room kind lives in the admin state (synchronized across P2P nodes
     // via snapshots and live admin-update messages).
-    let (kind, speakers) = {
+    let (kind, speakers, lobby) = {
         let lock = state.admin_rooms.lock().await;
         match lock.get(&room_id) {
             Some(admin) => {
@@ -2997,9 +3042,9 @@ pub(crate) async fn channel_status(
                 } else {
                     Vec::new()
                 };
-                (admin.kind.as_str().to_string(), speakers)
+                (admin.kind.as_str().to_string(), speakers, admin.lobby)
             }
-            None => ("regular".to_string(), Vec::new()),
+            None => ("regular".to_string(), Vec::new(), false),
         }
     };
 
@@ -3009,6 +3054,7 @@ pub(crate) async fn channel_status(
         created_at,
         kind,
         speakers,
+        lobby,
     })
     .into_response()
 }

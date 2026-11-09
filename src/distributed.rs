@@ -1188,6 +1188,7 @@ pub(crate) async fn broadcast_channel_list(
                     created_at: *created_at,
                     kind: String::new(),
                     speakers: Vec::new(),
+                    lobby: false,
                 },
             );
         }
@@ -1212,6 +1213,7 @@ pub(crate) async fn broadcast_channel_list(
                     created_at,
                     kind: String::new(),
                     speakers: Vec::new(),
+                    lobby: false,
                 },
             );
         }
@@ -1232,6 +1234,7 @@ pub(crate) async fn broadcast_channel_list(
                     created_at,
                     kind: String::new(),
                     speakers: Vec::new(),
+                    lobby: false,
                 });
             for (user_id, status) in users.iter() {
                 entry.users.insert(user_id.clone(), presence_status(status));

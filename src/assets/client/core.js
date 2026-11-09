@@ -3072,6 +3072,8 @@
                 document.getElementById('sidebarToggle').classList.remove('hidden');
                 applySidebarState(true);
                 updatePageTitle();
+                updateStageBadge();
+                updateLobbyBadge();
             }, 300);
 
             const videoTrack = localStream ? localStream.getVideoTracks()[0] : null;
@@ -3416,6 +3418,7 @@
                 forced: data.forced || {}
             };
             applyStageRole();
+            updateLobbyBadge();
             enforceAudienceAudio();
             const sidebarActions = document.getElementById('sidebarActions');
             if (sidebarActions) {
@@ -3437,6 +3440,52 @@
             }
         }
 
+        function updateLobbyBadge() {
+            const isLobby = !!(roomAdminState && roomAdminState.lobby);
+            const admin = typeof iAmAdmin === 'function' && iAmAdmin();
+
+            const badges = [document.getElementById('lobbyBadge'), document.getElementById('sidebarLobbyBadge')];
+            badges.forEach(badge => {
+                if (!badge) return;
+                if (isLobby) {
+                    badge.style.display = 'inline-flex';
+                    badge.textContent = 'Lobby On';
+                    badge.title = 'Lobby mode is active — new participants must knock to be let in';
+                    badge.onclick = null;
+                } else {
+                    badge.style.display = 'none';
+                    badge.onclick = null;
+                }
+            });
+
+            // Update sidebar header lobby control
+            const sidebarLobbyControl = document.getElementById('sidebarLobbyControl');
+            if (sidebarLobbyControl) {
+                sidebarLobbyControl.style.display = admin ? 'flex' : 'none';
+            }
+            const sidebarLobbyCheckbox = document.getElementById('sidebarLobbyCheckbox');
+            if (sidebarLobbyCheckbox) {
+                sidebarLobbyCheckbox.checked = isLobby;
+            }
+
+            // Update settings modal admin section
+            const settingsAdminSection = document.getElementById('settingsAdminSection');
+            if (settingsAdminSection) {
+                settingsAdminSection.style.display = admin ? '' : 'none';
+            }
+            const settingsLobbyCheckbox = document.getElementById('settingsLobbyCheckbox');
+            if (settingsLobbyCheckbox) {
+                settingsLobbyCheckbox.checked = isLobby;
+            }
+        }
+
+        function toggleLobbyMode(explicitValue) {
+            if (typeof iAmAdmin !== 'function' || !iAmAdmin()) return;
+            const targetState = typeof explicitValue === 'boolean' ? explicitValue : !roomAdminState.lobby;
+            sendAdminAction('set-lobby', '', { lobby: targetState });
+            showModNotice(targetState ? 'Lobby mode enabled' : 'Lobby mode disabled');
+        }
+
         function applyStageRole() {
             if (roomAdminState.kind === 'stage' && !canSpeakId(persistentUserId)) {
                 if (micIsOn()) toggleMic();
@@ -3445,6 +3494,7 @@
             }
             applyControlLocks();
             updateStageBadge();
+            updateLobbyBadge();
         }
 
         function applyForceStates() {

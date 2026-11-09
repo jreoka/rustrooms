@@ -2021,6 +2021,9 @@
             if (overlay) overlay.classList.remove('open');
             document.body.classList.remove('sidebar-open');
 
+            if (typeof updateStageBadge === 'function') updateStageBadge();
+            if (typeof updateLobbyBadge === 'function') updateLobbyBadge();
+
             const isMobileSlideOver = typeof isMobileSlideOverPortrait === 'function'
                 ? isMobileSlideOverPortrait()
                 : (window.innerWidth < 768 && (window.innerHeight >= window.innerWidth || (typeof window.matchMedia === 'function' && window.matchMedia('(orientation: portrait)').matches)));

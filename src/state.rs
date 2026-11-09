@@ -41,6 +41,9 @@ pub(crate) struct RoomStatus {
     /// so the landing page can split "On stage" from "Listeners".
     #[serde(default)]
     pub speakers: Vec<String>,
+    /// Whether lobby mode is enabled for this room.
+    #[serde(default)]
+    pub lobby: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

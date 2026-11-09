@@ -1937,9 +1937,18 @@
                 document.getElementById('inviteChannelName').innerText = `# ${data.name}`;
 
                 const isStage = data.kind === 'stage';
+                const isLobby = !!data.lobby;
                 document.getElementById('inviteKindBadge').innerText = isStage ? 'Live Stage' : 'Live Call';
                 document.getElementById('inviteStageNote').classList.toggle('hidden', !isStage);
-                document.getElementById('inviteJoinLabel').innerText = isStage ? 'Join as Listener' : 'Join Conversation';
+                const inviteLobbyBadge = document.getElementById('inviteLobbyBadge');
+                if (inviteLobbyBadge) {
+                    inviteLobbyBadge.style.display = isLobby ? 'inline-flex' : 'none';
+                }
+                const inviteLobbyNote = document.getElementById('inviteLobbyNote');
+                if (inviteLobbyNote) {
+                    inviteLobbyNote.classList.toggle('hidden', !isLobby);
+                }
+                document.getElementById('inviteJoinLabel').innerText = isLobby ? 'Request to Join' : (isStage ? 'Join as Listener' : 'Join Conversation');
                 
                 const buildInviteUserCard = (u) => {
                     const userDiv = document.createElement('div');

@@ -51,10 +51,22 @@
 
     <div id="roomSidebar">
         <div class="sidebar-header">
-            <h2 id="sidebarTitle" class="text-xl font-bold text-white">Channels</h2>
-            <button id="btnCloseSidebar" onclick="toggleSidebar()" class="text-zinc-400 hover:text-white transition-colors" aria-label="Close Channels">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
+            <div class="flex items-center gap-2 min-w-0">
+                <h2 id="sidebarTitle" class="text-xl font-bold text-white">Channels</h2>
+                <span id="sidebarLobbyBadge" class="lobby-badge" style="display: none;"></span>
+            </div>
+            <div class="flex items-center gap-3 flex-shrink-0">
+                <div id="sidebarLobbyControl" class="flex items-center gap-2" style="display: none;" title="Toggle lobby mode">
+                    <span class="text-xs font-medium text-zinc-400">Lobby</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="sidebarLobbyCheckbox" onchange="toggleLobbyMode(this.checked)" class="sr-only peer">
+                        <div class="lobby-switch-track"></div>
+                    </label>
+                </div>
+                <button id="btnCloseSidebar" onclick="toggleSidebar()" class="text-zinc-400 hover:text-white transition-colors" aria-label="Close Channels">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
         </div>
         <div class="sidebar-content">
             <div id="knockPanel" class="knock-panel" style="display: none;">
@@ -206,16 +218,20 @@
                 <span>Back</span>
             </button>
             <div class="space-y-3">
-                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold uppercase tracking-wider mb-2">
-                    <span class="relative flex h-2 w-2">
-                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                      <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-                    </span>
-                    <span id="inviteKindBadge">Live Call</span>
+                <div class="flex items-center justify-center gap-2 flex-wrap mb-2">
+                    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold uppercase tracking-wider">
+                        <span class="relative flex h-2 w-2">
+                          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                          <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                        </span>
+                        <span id="inviteKindBadge">Live Call</span>
+                    </div>
+                    <span id="inviteLobbyBadge" class="lobby-badge" style="display: none;">Lobby Mode</span>
                 </div>
                 <h1 id="inviteChannelName" class="text-3xl md:text-4xl font-bold tracking-tight text-white break-words"># General</h1>
                 <p id="inviteCallDuration" class="text-zinc-400 text-sm font-medium">Running for 00:00:00</p>
                 <p id="inviteStageNote" class="hidden text-sm" style="color: var(--text-secondary); line-height: 1.625;">This is a <span class="font-semibold" style="color: var(--text-primary);">stage room</span>, not a regular call. You'll join as a listener — an admin can bring you on stage when it's your turn to speak.</p>
+                <p id="inviteLobbyNote" class="hidden text-sm" style="color: var(--text-secondary); line-height: 1.625;">This room has a <span class="font-semibold" style="color: var(--text-primary);">lobby</span> — an admin will approve your request to let you in.</p>
             </div>
 
             <div id="inviteFlatBlock" class="space-y-4">
@@ -443,6 +459,19 @@
                                 </label>
                             </div>
                         </div>
+                        <div id="settingsAdminSection" class="border-t border-[var(--border-subtle)] pt-4 mt-4 space-y-3 text-left" style="display: none;">
+                            <label class="label-text block text-xs font-bold text-zinc-400 uppercase tracking-wider">Room Administration</label>
+                            <div class="m3-row flex items-center justify-between">
+                                <div class="flex flex-col">
+                                    <span class="text-sm font-semibold text-white">Lobby Mode</span>
+                                    <span class="text-xs text-zinc-400">Require admin approval before new participants can join</span>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
+                                    <input type="checkbox" id="settingsLobbyCheckbox" onchange="toggleLobbyMode(this.checked)" class="sr-only peer">
+                                    <div class="lobby-switch-track"></div>
+                                </label>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -465,6 +494,7 @@
                 </button>
                 <div id="currentChannelName" class="text-white font-semibold text-lg md:text-xl truncate min-w-0 drop-shadow-md"></div>
                 <span id="stageBadge" class="stage-badge" style="display: none;"></span>
+                <span id="lobbyBadge" class="lobby-badge" style="display: none;"></span>
             </div>
 
             <div class="flex items-center justify-end gap-2 md:gap-3 flex-shrink-0">

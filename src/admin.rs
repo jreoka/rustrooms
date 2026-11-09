@@ -593,4 +593,17 @@ mod tests {
         assert!(!validate_resume_token(&state, room_id, &user_id, "General", Some(&token)).await);
         assert!(!validate_room_resume_token(&state, room_id, &user_id, "Lounge", Some(&token)).await);
     }
+
+    #[tokio::test]
+    async fn toggle_lobby_updates_admin_state() {
+        let mut admin = RoomAdmin::default();
+        let admin_id = "admin-1".to_string();
+        admin.admins.insert(admin_id.clone());
+        assert!(!admin.lobby);
+
+        admin.lobby = true;
+        assert!(admin.lobby);
+        assert!(admin.is_admin(&admin_id));
+        assert!(!admin.is_admin("non-admin"));
+    }
 }
