@@ -1299,16 +1299,13 @@ video.active + .avatar-layer { display: none !important; }
     background: color-mix(in srgb, var(--md-primary) 18%, transparent);
     transform: scale(1.02);
 }
-.room-user-row.touch-drag-active {
-    opacity: 0.55;
-    background: color-mix(in srgb, var(--md-primary) 28%, transparent);
-    transform: scale(1.04);
-}
+.room-user-row.touch-drag-active,
 .room-user-row.user-drag-active {
     opacity: 0.55;
     background: color-mix(in srgb, var(--md-primary) 20%, transparent);
     outline: 1.5px dashed var(--md-primary, #6366f1);
     outline-offset: -1px;
+    transform: none !important;
 }
 .room-user-row:hover {
     background: color-mix(in srgb, var(--md-on-surface) 6%, transparent);

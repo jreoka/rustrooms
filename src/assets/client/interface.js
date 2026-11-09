@@ -615,7 +615,7 @@
             if (sourceEl) {
                 const clone = sourceEl.cloneNode(true);
                 clone.removeAttribute('id');
-                clone.classList.remove('touch-held', 'touch-drag-active');
+                clone.classList.remove('touch-held', 'touch-drag-active', 'user-drag-active');
                 _dragGhostEl.appendChild(clone);
                 const rect = sourceEl.getBoundingClientRect();
                 if (rect.width > 0) {
@@ -720,6 +720,7 @@
                     if (e.cancelable) e.preventDefault(); // Stop sidebar scrolling
 
                     if (_userTouchState.el) {
+                        _userTouchState.el.classList.remove('touch-held');
                         _userTouchState.el.classList.add('touch-drag-active');
                     }
                     if (!_dragGhostEl) {
