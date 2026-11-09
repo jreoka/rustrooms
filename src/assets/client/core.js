@@ -3612,7 +3612,23 @@
             const modal = document.getElementById('createRoomModal');
             if (modal) modal.classList.add('open');
         }
-        function closeCreateRoomMenu() { animateModalClose('createRoomModal'); }
+        function closeCreateRoomMenu() {
+            animateModalClose('createRoomModal');
+            if (roomId && !getCreateOpts()) {
+                try {
+                    sessionStorage.setItem('rustrooms_create_opts', JSON.stringify({
+                        type: 'regular',
+                        lobby: false
+                    }));
+                } catch (e) {}
+                sessionStorage.setItem('rustrooms_welcomed', 'true');
+                if (typeof showOverlayAnimated === 'function' && typeof configOverlay !== 'undefined') {
+                    showOverlayAnimated(configOverlay);
+                    if (typeof initSetupButtonTouchHandlers === 'function') initSetupButtonTouchHandlers();
+                    if (typeof loadDevices === 'function') loadDevices();
+                }
+            }
+        }
         function selectCreateType(type) {
             createRoomTypeChoice = type;
             const regular = document.getElementById('createTypeRegular');
@@ -3624,10 +3640,19 @@
             const lobbyToggle = document.getElementById('createLobbyToggle');
             try {
                 sessionStorage.setItem('rustrooms_create_opts', JSON.stringify({
-                    type: createRoomTypeChoice,
+                    type: createRoomTypeChoice || 'regular',
                     lobby: !!(lobbyToggle && lobbyToggle.checked)
                 }));
             } catch (e) {}
-            closeCreateRoomMenu();
-            createRoom();
+            animateModalClose('createRoomModal');
+            if (roomId) {
+                sessionStorage.setItem('rustrooms_welcomed', 'true');
+                if (typeof showOverlayAnimated === 'function' && typeof configOverlay !== 'undefined') {
+                    showOverlayAnimated(configOverlay);
+                    if (typeof initSetupButtonTouchHandlers === 'function') initSetupButtonTouchHandlers();
+                    if (typeof loadDevices === 'function') loadDevices();
+                }
+            } else {
+                createRoom();
+            }
         }

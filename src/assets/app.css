@@ -1290,14 +1290,19 @@ video.active + .avatar-layer { display: none !important; }
     gap: 10px;
     padding: 6px 8px;
     border-radius: var(--radius-md);
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, transform 0.15s ease;
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
 }
+.room-user-row.touch-held {
+    background: color-mix(in srgb, var(--md-primary) 18%, transparent);
+    transform: scale(1.02);
+}
 .room-user-row.touch-drag-active {
     opacity: 0.55;
-    background: color-mix(in srgb, var(--md-primary) 20%, transparent);
+    background: color-mix(in srgb, var(--md-primary) 28%, transparent);
+    transform: scale(1.04);
 }
 .room-user-row:hover {
     background: color-mix(in srgb, var(--md-on-surface) 6%, transparent);
