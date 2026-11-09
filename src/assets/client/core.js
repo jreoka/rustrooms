@@ -273,7 +273,7 @@
             if (el) {
                 const lvl = smartQuality.videoLevel >= 2 && smartQuality.audioLevel >= 2 ? 'High'
                     : (smartQuality.videoLevel <= 0 || smartQuality.audioLevel <= 0 ? 'Low' : 'Medium');
-                el.textContent = `Auto - ${lvl}`;
+                el.textContent = lvl;
                 el.className = 'stats-row-value font-semibold ' + (lvl === 'High' ? 'text-emerald-400' : lvl === 'Medium' ? 'text-amber-400' : 'text-orange-400');
             }
             const vi = document.getElementById('statVoiceIn');
