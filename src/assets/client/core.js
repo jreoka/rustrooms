@@ -3275,7 +3275,8 @@
                     } else if (entry.with.length <= 3) {
                         sub.textContent = 'with ' + entry.with.join(', ');
                     } else {
-                        sub.textContent = 'with ' + entry.with.slice(0, 2).join(', ') + ' +' + (entry.with.length - 2) + ' more';
+                        const remaining = entry.with.length - 2;
+                        sub.textContent = 'with ' + entry.with.slice(0, 2).join(', ') + ' and ' + remaining + (remaining === 1 ? ' other' : ' others');
                     }
                     main.appendChild(sub);
                 }

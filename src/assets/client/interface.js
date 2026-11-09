@@ -1647,6 +1647,40 @@
             if (e.dataTransfer) {
                 try { e.dataTransfer.setData('text/plain', uid); } catch (err) {}
                 e.dataTransfer.effectAllowed = 'move';
+
+                // Give desktop drag preview the identical bluepurple outline and styling as mobile
+                if (typeof e.dataTransfer.setDragImage === 'function') {
+                    const targetRow = e.target.closest('.room-user-row') || e.target;
+                    const rect = targetRow.getBoundingClientRect();
+                    const clone = targetRow.cloneNode(true);
+                    clone.id = 'desktopDragGhost';
+                    clone.style.position = 'fixed';
+                    clone.style.left = '-9999px';
+                    clone.style.top = '-9999px';
+                    clone.style.width = Math.round(rect.width > 0 ? rect.width : targetRow.offsetWidth) + 'px';
+                    clone.style.background = 'var(--md-surface-container-high, #1e1e24)';
+                    clone.style.border = '1.5px solid var(--md-primary, #6366f1)';
+                    clone.style.borderRadius = 'var(--radius-md, 8px)';
+                    clone.style.boxShadow = '0 12px 30px rgba(0, 0, 0, 0.6), 0 0 14px rgba(99, 102, 241, 0.35)';
+                    clone.style.boxSizing = 'border-box';
+                    clone.style.pointerEvents = 'none';
+                    clone.style.zIndex = '9999';
+                    document.body.appendChild(clone);
+
+                    const offsetX = (e.clientX && rect.left) ? Math.max(10, Math.min(e.clientX - rect.left, rect.width - 10)) : 20;
+                    const offsetY = (e.clientY && rect.top) ? Math.max(8, Math.min(e.clientY - rect.top, rect.height - 8)) : 16;
+                    try {
+                        e.dataTransfer.setDragImage(clone, offsetX, offsetY);
+                    } catch (err) {}
+                    setTimeout(() => {
+                        if (clone.parentNode) clone.parentNode.removeChild(clone);
+                    }, 0);
+                }
+            }
+
+            const targetRow = e.target.closest('.room-user-row') || e.target;
+            if (targetRow && targetRow.classList) {
+                targetRow.classList.add('user-drag-active');
             }
         }
 
@@ -1656,6 +1690,7 @@
             if (_userTouchState.el) {
                 _userTouchState.el.classList.remove('touch-held', 'touch-drag-active');
             }
+            document.querySelectorAll('.room-user-row.user-drag-active').forEach(el => el.classList.remove('user-drag-active'));
             document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
             document.querySelectorAll('.room-item').forEach(el => {
                 el.classList.remove('opacity-50', 'border-t-2', 'border-indigo-500');
