@@ -66,6 +66,8 @@
     --accent-glow: transparent;
     --accent-blue: var(--md-primary);
     --accent-dark-blue: var(--md-primary-container);
+    --accent-text: #c5c9ff;
+    --accent-container: var(--md-primary-container);
 
     --accent-green: #3BA55C;
     --accent-green-hover: #359550;
@@ -148,6 +150,8 @@
     --md-surface-container-highest: #E3E3E8;
 
     --accent-hover: #494FD6;
+    --accent-text: #3730a3;
+    --accent-container: var(--md-primary-container);
 
     --c-surface: 244 244 246;
     --c-low: 255 255 255;
@@ -2029,6 +2033,12 @@ video.active + .avatar-layer { display: none !important; }
     border: 1px solid var(--border-subtle);
     user-select: none;
     -webkit-user-select: none;
+}
+:root[data-theme="light"] .lobby-badge,
+:root[data-theme="light"] .stage-badge {
+    color: var(--accent-text, #3730a3);
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-tertiary));
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
 }
 
 .lobby-switch-track {
