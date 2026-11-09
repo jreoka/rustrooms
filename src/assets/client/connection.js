@@ -2021,6 +2021,15 @@
             if (overlay) overlay.classList.remove('open');
             document.body.classList.remove('sidebar-open');
 
+            const isMobileSlideOver = typeof isMobileSlideOverPortrait === 'function'
+                ? isMobileSlideOverPortrait()
+                : (window.innerWidth < 768 && (window.innerHeight >= window.innerWidth || (typeof window.matchMedia === 'function' && window.matchMedia('(orientation: portrait)').matches)));
+            if (isMobileSlideOver) {
+                try {
+                    localStorage.setItem('rustrooms_sidebar_open', 'false');
+                } catch (e) {}
+            }
+
             sessionStorage.setItem('rustrooms_welcomed', 'false');
             sessionStorage.setItem('rustrooms_setup_done', 'false');
             sessionStorage.removeItem('rustrooms_last_room_id');

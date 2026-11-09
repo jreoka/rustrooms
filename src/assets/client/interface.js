@@ -402,26 +402,39 @@
             }
         });
 
+        function isMobileSlideOverPortrait() {
+            const isSlideOver = window.innerWidth < 768;
+            const isPortrait = window.innerHeight >= window.innerWidth ||
+                (typeof window.matchMedia === 'function' && window.matchMedia('(orientation: portrait)').matches);
+            return isSlideOver && isPortrait;
+        }
+
         function applySidebarState(noTransition = false) {
+            const isMobilePortrait = isMobileSlideOverPortrait();
+            if (isMobilePortrait) {
+                try {
+                    localStorage.setItem('rustrooms_sidebar_open', 'false');
+                } catch (e) {}
+            }
+
             const savedState = localStorage.getItem('rustrooms_sidebar_open');
-            const isOpen = savedState === 'true';
+            const isOpen = savedState === 'true' && !isMobilePortrait;
             const isDesktop = window.innerWidth >= 768;
             const sidebarToggle = document.getElementById('sidebarToggle');
+            const sidebar = document.getElementById('roomSidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            const body = document.body;
 
             if (isOpen) {
-                const body = document.body;
-                const sidebar = document.getElementById('roomSidebar');
-                const overlay = document.getElementById('sidebarOverlay');
-
-                if (noTransition) {
+                if (noTransition && sidebar) {
                     sidebar.style.transition = 'none';
                 }
                 body.classList.add('sidebar-open');
-                sidebar.classList.add('open');
-                sidebarToggle.classList.add('hidden');
+                if (sidebar) sidebar.classList.add('open');
+                if (sidebarToggle) sidebarToggle.classList.add('hidden');
 
                 if (isDesktop) {
-                    overlay.classList.remove('open');
+                    if (overlay) overlay.classList.remove('open');
 
                     const pip = document.getElementById('localPipWrapper');
                     if (pip) {
@@ -437,19 +450,37 @@
                         }
                     }
                 } else {
-                    overlay.classList.add('open');
+                    if (overlay) overlay.classList.add('open');
                 }
 
-                if (noTransition) {
-
+                if (noTransition && sidebar) {
                     sidebar.offsetHeight;
-
                     setTimeout(() => {
                         sidebar.style.transition = '';
                     }, 50);
                 }
             } else {
-                sidebarToggle.classList.remove('hidden');
+                if (noTransition && sidebar) {
+                    sidebar.style.transition = 'none';
+                }
+                if (sidebar) sidebar.classList.remove('open');
+                if (overlay) overlay.classList.remove('open');
+                body.classList.remove('sidebar-open');
+                if (sidebarToggle) sidebarToggle.classList.remove('hidden');
+
+                const pip = document.getElementById('localPipWrapper');
+                if (pip) {
+                    pip.style.left = '';
+                    pip.style.right = '';
+                    pip.style.bottom = '';
+                }
+
+                if (noTransition && sidebar) {
+                    sidebar.offsetHeight;
+                    setTimeout(() => {
+                        sidebar.style.transition = '';
+                    }, 50);
+                }
             }
         }
 
@@ -577,23 +608,38 @@
         let _uvmJustOpenedTime = 0;
         let _dragGhostEl = null;
 
-        function showTouchDragGhost(nickname, x, y) {
+        function showTouchDragGhost(sourceEl, nickname, x, y) {
             hideTouchDragGhost();
             _dragGhostEl = document.createElement('div');
             _dragGhostEl.id = 'touchDragGhost';
-            _dragGhostEl.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
-                <span>Move ${escapeHtml(nickname)}</span>
-            `;
+            if (sourceEl) {
+                const clone = sourceEl.cloneNode(true);
+                clone.removeAttribute('id');
+                clone.classList.remove('touch-held', 'touch-drag-active');
+                _dragGhostEl.appendChild(clone);
+                const rect = sourceEl.getBoundingClientRect();
+                if (rect.width > 0) {
+                    _dragGhostEl.style.width = Math.round(rect.width) + 'px';
+                }
+            } else {
+                _dragGhostEl.innerHTML = `
+                    <div class="room-user-row">
+                        <div class="user-avatar-wrap">
+                            <div class="mini-avatar"><div class="mini-avatar-placeholder">${escapeHtml((nickname || 'U').charAt(0).toUpperCase())}</div></div>
+                        </div>
+                        <span class="room-user-name">${escapeHtml(nickname || 'User')}</span>
+                    </div>
+                `;
+            }
             _dragGhostEl.style.left = x + 'px';
-            _dragGhostEl.style.top = (y - 12) + 'px';
+            _dragGhostEl.style.top = y + 'px';
             document.body.appendChild(_dragGhostEl);
         }
 
         function updateTouchDragGhost(x, y) {
             if (_dragGhostEl) {
                 _dragGhostEl.style.left = x + 'px';
-                _dragGhostEl.style.top = (y - 12) + 'px';
+                _dragGhostEl.style.top = y + 'px';
             }
         }
 
@@ -676,7 +722,11 @@
                     if (_userTouchState.el) {
                         _userTouchState.el.classList.add('touch-drag-active');
                     }
-                    showTouchDragGhost(_userTouchState.nickname, touch.clientX, touch.clientY);
+                    if (!_dragGhostEl) {
+                        showTouchDragGhost(_userTouchState.el, _userTouchState.nickname, touch.clientX, touch.clientY);
+                    } else {
+                        updateTouchDragGhost(touch.clientX, touch.clientY);
+                    }
                     updateTouchDropHover(touch.clientX, touch.clientY);
                 }
             }
