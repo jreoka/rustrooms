@@ -559,7 +559,28 @@
         let userClickTracker = {};
         let pendingKickUserId = null;
 
+        let _userTouchState = {
+            active: false,
+            el: null,
+            userId: null,
+            nickname: null,
+            startX: 0,
+            startY: 0,
+            startTime: 0,
+            moved: false,
+            menuOpened: false,
+            isDraggingUser: false,
+            holdTimer: null,
+            lastTouchTime: 0
+        };
+        let _uvmJustOpenedTime = 0;
+
         function handleUserClick(el) {
+            // Ignore click if a touch drag or menu hold just occurred
+            if (_userTouchState.menuOpened || _userTouchState.isDraggingUser || (Date.now() - _userTouchState.lastTouchTime < 400)) {
+                return;
+            }
+
             const userId = el.dataset.userId;
             const nickname = el.dataset.userNickname;
 
@@ -582,46 +603,166 @@
             }
         }
 
-        let _uvmLongPressTimer = null;
-        let _uvmTouchMoved = false;
-
         function handleUserContextMenu(e, el) {
             e.preventDefault();
             e.stopPropagation();
+
+            // Do not open menu if user is dragging or moved on touch
+            if (_userTouchState.isDraggingUser || (_userTouchState.active && _userTouchState.moved)) {
+                return;
+            }
+
             const userId = el.dataset.userId;
             const nickname = el.dataset.userNickname;
             if (!userId || userId === persistentUserId) return;
+
+            // If menu was already opened by the touch hold timer, avoid duplicate trigger
+            if (_userTouchState.menuOpened) return;
+
+            _uvmJustOpenedTime = Date.now();
             showUserVolumeMenu(userId, nickname, e.clientX, e.clientY);
         }
 
         function handleUserTouchStart(e, el) {
-            _uvmTouchMoved = false;
+            if (e.touches.length > 1) return;
             const touch = e.touches[0];
-            const tx = touch.clientX;
-            const ty = touch.clientY;
-            _uvmLongPressTimer = setTimeout(() => {
-                if (_uvmTouchMoved) return;
-                const userId = el.dataset.userId;
-                const nickname = el.dataset.userNickname;
-                if (!userId || userId === persistentUserId) return;
-                e.preventDefault();
-                showUserVolumeMenu(userId, nickname, tx, ty);
-            }, 500);
+            const userId = el.dataset.userId;
+            const nickname = el.dataset.userNickname;
+
+            if (_userTouchState.holdTimer) {
+                clearTimeout(_userTouchState.holdTimer);
+            }
+
+            _userTouchState = {
+                active: true,
+                el: el,
+                userId: userId,
+                nickname: nickname,
+                startX: touch.clientX,
+                startY: touch.clientY,
+                startTime: Date.now(),
+                moved: false,
+                menuOpened: false,
+                isDraggingUser: false,
+                holdTimer: null,
+                lastTouchTime: Date.now()
+            };
+
+            // If admin, temporarily prevent parent room-item from dragging so it doesn't compete
+            if (typeof iAmAdmin === 'function' && iAmAdmin()) {
+                const roomItem = el.closest('.room-item');
+                if (roomItem) roomItem.draggable = false;
+            }
+
+            // Holding down in the same place triggers the right click menu
+            _userTouchState.holdTimer = setTimeout(() => {
+                if (!_userTouchState.active || _userTouchState.moved || _userTouchState.isDraggingUser) return;
+                _userTouchState.menuOpened = true;
+                if (userId && userId !== persistentUserId) {
+                    _uvmJustOpenedTime = Date.now();
+                    showUserVolumeMenu(userId, nickname, _userTouchState.startX, _userTouchState.startY);
+                    if (navigator.vibrate) {
+                        try { navigator.vibrate(25); } catch (_) {}
+                    }
+                }
+            }, 450);
         }
 
-        function handleUserTouchEnd(e) {
-            if (_uvmLongPressTimer) {
-                clearTimeout(_uvmLongPressTimer);
-                _uvmLongPressTimer = null;
+        function handleUserTouchMove(e, el) {
+            if (!_userTouchState.active) return;
+            const touch = e.touches[0];
+            if (!touch) return;
+
+            const dx = touch.clientX - _userTouchState.startX;
+            const dy = touch.clientY - _userTouchState.startY;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > 8) {
+                _userTouchState.moved = true;
+                if (_userTouchState.holdTimer) {
+                    clearTimeout(_userTouchState.holdTimer);
+                    _userTouchState.holdTimer = null;
+                }
+
+                // If menu was already opened while holding, close it immediately because user is dragging to move
+                if (_userTouchState.menuOpened) {
+                    closeUserVolumeMenu();
+                    _userTouchState.menuOpened = false;
+                }
+
+                // Holding and dragging triggers the move if admin (and NOT the right click menu)
+                if (typeof iAmAdmin === 'function' && iAmAdmin()) {
+                    _userTouchState.isDraggingUser = true;
+                    draggedUserId = _userTouchState.userId;
+                    if (e.cancelable) e.preventDefault(); // Stop sidebar scrolling
+
+                    el.classList.add('touch-drag-active');
+                    updateTouchDropHover(touch.clientX, touch.clientY);
+                }
             }
         }
 
-        function handleUserTouchCancel() {
-            _uvmTouchMoved = true;
-            if (_uvmLongPressTimer) {
-                clearTimeout(_uvmLongPressTimer);
-                _uvmLongPressTimer = null;
+        function handleUserTouchEnd(e, el) {
+            if (!_userTouchState.active) return;
+
+            if (_userTouchState.holdTimer) {
+                clearTimeout(_userTouchState.holdTimer);
+                _userTouchState.holdTimer = null;
             }
+
+            _userTouchState.lastTouchTime = Date.now();
+            const touch = (e.changedTouches && e.changedTouches[0]) || null;
+            const clientX = touch ? touch.clientX : _userTouchState.startX;
+            const clientY = touch ? touch.clientY : _userTouchState.startY;
+
+            const wasDragging = _userTouchState.isDraggingUser;
+            const uid = _userTouchState.userId;
+            const menuOpened = _userTouchState.menuOpened;
+
+            if (_userTouchState.el) {
+                _userTouchState.el.classList.remove('touch-drag-active');
+            }
+            document.querySelectorAll('.drop-hover').forEach(h => h.classList.remove('drop-hover'));
+            document.querySelectorAll('.room-item').forEach(r => { r.draggable = true; });
+
+            _userTouchState.active = false;
+            _userTouchState.isDraggingUser = false;
+
+            // If user was dragging: perform move drop
+            if (wasDragging && typeof iAmAdmin === 'function' && iAmAdmin() && uid) {
+                if (e.cancelable) e.preventDefault();
+                draggedUserId = null;
+                executeTouchDrop(clientX, clientY, uid);
+                return;
+            }
+
+            // If menu was opened from holding in place
+            if (menuOpened) {
+                if (e.cancelable) e.preventDefault();
+                draggedUserId = null;
+                return;
+            }
+
+            draggedUserId = null;
+        }
+
+        function handleUserTouchCancel(e, el) {
+            if (_userTouchState.holdTimer) {
+                clearTimeout(_userTouchState.holdTimer);
+                _userTouchState.holdTimer = null;
+            }
+            if (_userTouchState.el) {
+                _userTouchState.el.classList.remove('touch-drag-active');
+            }
+            document.querySelectorAll('.drop-hover').forEach(h => h.classList.remove('drop-hover'));
+            document.querySelectorAll('.room-item').forEach(r => { r.draggable = true; });
+
+            _userTouchState.active = false;
+            _userTouchState.moved = true;
+            _userTouchState.isDraggingUser = false;
+            _userTouchState.menuOpened = false;
+            _userTouchState.lastTouchTime = Date.now();
+            draggedUserId = null;
         }
 
         function showUserVolumeMenu(userId, nickname, x, y) {
@@ -813,11 +954,20 @@
         };
 
         document.addEventListener('mousedown', function(e) {
+            if (Date.now() - _uvmJustOpenedTime < 300) return;
             const menu = document.getElementById('userVolumeMenu');
             if (menu && menu.classList.contains('open') && !menu.contains(e.target)) {
                 closeUserVolumeMenu();
             }
         });
+
+        document.addEventListener('touchstart', function(e) {
+            if (Date.now() - _uvmJustOpenedTime < 300) return;
+            const menu = document.getElementById('userVolumeMenu');
+            if (menu && menu.classList.contains('open') && !menu.contains(e.target)) {
+                closeUserVolumeMenu();
+            }
+        }, { passive: true });
 
         document.addEventListener('keydown', function(e) {
             const t = e.target;
@@ -1216,7 +1366,7 @@
                     }
 
                     const rowHtml = `
-                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" onmouseenter="this.closest('.room-item').draggable=false" onmouseleave="this.closest('.room-item').draggable=true" ondragstart="handleUserDragStart(event, '${uid}')" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchend="handleUserTouchEnd(event)" ontouchmove="handleUserTouchCancel()">
+                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" onmouseenter="this.closest('.room-item').draggable=false" onmouseleave="this.closest('.room-item').draggable=true" ondragstart="handleUserDragStart(event, '${uid}')" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchmove="handleUserTouchMove(event, this)" ontouchend="handleUserTouchEnd(event, this)" ontouchcancel="handleUserTouchCancel(event, this)">
                             <div class="user-avatar-wrap">
                                 <div class="mini-avatar">
                                     ${avatar ? (isGif && staticFrame ? `<img src="${escapeHtml(staticFrame)}" data-gif-src="${escapeHtml(avatar)}" data-static-src="${escapeHtml(staticFrame)}">` : `<img src="${escapeHtml(avatar)}">`) : `<div class="mini-avatar-placeholder">${escapeHtml(u.nickname.charAt(0).toUpperCase())}</div>`}
@@ -1295,7 +1445,70 @@
         // ---- Drag & drop user moves (admins) ----
         let draggedUserId = null;
 
+        function updateTouchDropHover(clientX, clientY) {
+            document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
+            const elUnder = document.elementFromPoint(clientX, clientY);
+            if (!elUnder) return;
+
+            const stageGroup = elUnder.closest('.stage-group');
+            if (stageGroup) {
+                stageGroup.classList.add('drop-hover');
+                return;
+            }
+
+            const roomItem = elUnder.closest('.room-item');
+            if (roomItem && roomItem.dataset.rid !== channelId) {
+                roomItem.classList.add('drop-hover');
+            }
+        }
+
+        function executeTouchDrop(clientX, clientY, uid) {
+            document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
+            if (!uid) return;
+
+            const elUnder = document.elementFromPoint(clientX, clientY);
+            if (!elUnder) return;
+
+            const stageGroup = elUnder.closest('.stage-group');
+            if (stageGroup) {
+                const targetRid = stageGroup.closest('.room-item')?.dataset.rid || channelId;
+                if (targetRid !== channelId) {
+                    moveUserToChannel(uid, targetRid);
+                } else if (stageGroup.dataset.drop === 'stage') {
+                    if (!canSpeakId(uid)) sendAdminAction('to-stage', uid);
+                } else if (canSpeakId(uid)) {
+                    sendAdminAction('to-audience', uid);
+                }
+                return;
+            }
+
+            const roomItem = elUnder.closest('.room-item');
+            if (roomItem) {
+                const targetRid = roomItem.dataset.rid;
+                if (targetRid && targetRid !== channelId) {
+                    moveUserToChannel(uid, targetRid);
+                }
+            }
+        }
+
         function handleUserDragStart(e, uid) {
+            // If native HTML5 drag tries to start on touch before any movement (from hold-in-place),
+            // cancel native drag so holding in place ONLY triggers the volume menu, not a move!
+            if (_userTouchState.active && !_userTouchState.moved) {
+                if (e.preventDefault) e.preventDefault();
+                return;
+            }
+
+            // Cancel any hold timer and close menu if dragging
+            if (_userTouchState.holdTimer) {
+                clearTimeout(_userTouchState.holdTimer);
+                _userTouchState.holdTimer = null;
+            }
+            if (_userTouchState.menuOpened) {
+                closeUserVolumeMenu();
+                _userTouchState.menuOpened = false;
+            }
+
             draggedUserId = uid;
             e.stopPropagation();
             // The room item must never compete as a drag source for a user
@@ -1310,6 +1523,9 @@
 
         function handleUserDragEnd() {
             draggedUserId = null;
+            if (_userTouchState.el) {
+                _userTouchState.el.classList.remove('touch-drag-active');
+            }
             document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
             document.querySelectorAll('.room-item').forEach(el => { el.draggable = true; });
         }
