@@ -46,7 +46,7 @@ pub(crate) async fn manifest_json() -> impl IntoResponse {
 
 pub(crate) async fn service_worker_js() -> impl IntoResponse {
     let sw = r##"
-const CACHE_NAME = 'rustrooms-m5-v1';
+const CACHE_NAME = 'rustrooms-m5-v2';
 const ASSETS = [
     '/icon.svg',
     '/rnnoise.js',

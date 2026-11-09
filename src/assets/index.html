@@ -21,6 +21,22 @@
             var rrMeta = document.querySelector('meta[name="theme-color"]');
             if (rrMeta) rrMeta.setAttribute('content', rrTheme === 'light' ? '#F4F4F6' : '#050506');
         } catch (e) {}
+
+        // Set dynamic app height to avoid mobile Chrome/Android PWA standalone
+        // 100dvh bug where the navigation bar is ignored, pushing the bottom taskbar off-screen.
+        function setAppHeight() {
+            var h = window.innerHeight;
+            if (window.visualViewport) {
+                h = Math.round(window.visualViewport.height);
+            }
+            document.documentElement.style.setProperty('--app-height', h + 'px');
+        }
+        setAppHeight();
+        window.addEventListener('resize', setAppHeight);
+        window.addEventListener('orientationchange', setAppHeight);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', setAppHeight);
+        }
     </script>
     <link rel="stylesheet" href="/assets/tailwind.min.css">
     <link href="/assets/inter.css" rel="stylesheet">

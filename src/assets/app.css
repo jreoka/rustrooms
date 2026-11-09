@@ -189,10 +189,18 @@ body {
     position: fixed;
     inset: 0;
     width: 100%;
-    height: 100dvh;
+    height: 100%;
+    height: var(--app-height, 100%);
     touch-action: pan-x pan-y;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+@media (display-mode: standalone) {
+    body {
+        height: 100% !important;
+        height: var(--app-height, 100%) !important;
+    }
 }
 
 * {
@@ -660,9 +668,9 @@ input[type=range]::-moz-range-thumb {
  * Taskbar — full-width bar, hairline top border
  * ============================================================ */
 .taskbar {
-    background: transparent;
-    border-top: none;
-    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--md-surface-container-low);
+    border-top: 1px solid var(--md-outline-variant);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
 }
@@ -672,8 +680,8 @@ input[type=range]::-moz-range-thumb {
     max-width: none;
     align-items: center;
     justify-content: center;
-    background: var(--md-surface-container-low);
-    border-top: 1px solid var(--md-outline-variant);
+    background: transparent;
+    border-top: none;
     border-radius: 0;
     padding: 10px 16px !important;
     gap: 8px !important;
