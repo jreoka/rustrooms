@@ -3290,10 +3290,6 @@
             }
             const meta = document.querySelector('meta[name="theme-color"]');
             if (meta) meta.setAttribute('content', light ? '#F4F4F6' : '#050506');
-            const sun = document.getElementById('iconThemeSun');
-            const moon = document.getElementById('iconThemeMoon');
-            if (sun) sun.classList.toggle('hidden', light);
-            if (moon) moon.classList.toggle('hidden', !light);
             const settingsTheme = document.getElementById('settingsTheme');
             if (settingsTheme) settingsTheme.checked = light;
             const setupTheme = document.getElementById('setupTheme');

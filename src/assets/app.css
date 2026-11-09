@@ -116,7 +116,7 @@
 
 /* ============================================================
  * Light theme — same tokens, light values. Enabled by
- * data-theme="light" on <html> (toggle in the top bar and in
+ * data-theme="light" on <html> (toggle in Setup and in
  * Settings; persisted in localStorage as rustrooms_theme).
  * ============================================================ */
 :root[data-theme="light"] {
@@ -1938,11 +1938,10 @@ video.active + .avatar-layer { display: none !important; }
 }
 
 /* On mobile the 32px header buttons make their glyphs read large;
-   scale the hamburger and theme icons down a touch (desktop keeps
-   the sizes set in the markup). */
+   scale the hamburger icon down a touch (desktop keeps
+   the size set in the markup). */
 @media (max-width: 767px) {
     #sidebarToggle svg { width: 13px; height: 13px; }
-    #btnTheme svg { width: 15px; height: 15px; }
 }
 
 /* ---- Room admin: crowns, audience, menus, lobby, stage ---- */
