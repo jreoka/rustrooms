@@ -564,6 +564,7 @@
             el: null,
             userId: null,
             nickname: null,
+            sourceRid: null,
             startX: 0,
             startY: 0,
             startTime: 0,
@@ -574,6 +575,34 @@
             lastTouchTime: 0
         };
         let _uvmJustOpenedTime = 0;
+        let _dragGhostEl = null;
+
+        function showTouchDragGhost(nickname, x, y) {
+            hideTouchDragGhost();
+            _dragGhostEl = document.createElement('div');
+            _dragGhostEl.id = 'touchDragGhost';
+            _dragGhostEl.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
+                <span>Move ${escapeHtml(nickname)}</span>
+            `;
+            _dragGhostEl.style.left = x + 'px';
+            _dragGhostEl.style.top = (y - 12) + 'px';
+            document.body.appendChild(_dragGhostEl);
+        }
+
+        function updateTouchDragGhost(x, y) {
+            if (_dragGhostEl) {
+                _dragGhostEl.style.left = x + 'px';
+                _dragGhostEl.style.top = (y - 12) + 'px';
+            }
+        }
+
+        function hideTouchDragGhost() {
+            if (_dragGhostEl) {
+                _dragGhostEl.remove();
+                _dragGhostEl = null;
+            }
+        }
 
         function handleUserClick(el) {
             // Ignore click if a touch drag or menu hold just occurred
@@ -620,44 +649,7 @@
             showUserVolumeMenu(userId, nickname, e.clientX, e.clientY);
         }
 
-        function handleUserTouchStart(e, el) {
-            if (e.touches.length > 1) return;
-            const touch = e.touches[0];
-            const userId = el.dataset.userId;
-            const nickname = el.dataset.userNickname;
-
-            if (_userTouchState.holdTimer) {
-                clearTimeout(_userTouchState.holdTimer);
-            }
-
-            _userTouchState = {
-                active: true,
-                el: el,
-                userId: userId,
-                nickname: nickname,
-                startX: touch.clientX,
-                startY: touch.clientY,
-                startTime: Date.now(),
-                moved: false,
-                isHold: false,
-                isDragging: false,
-                holdTimer: null,
-                lastTouchTime: Date.now()
-            };
-
-            // Hold timer: 320ms to register as holding down
-            _userTouchState.holdTimer = setTimeout(() => {
-                if (!_userTouchState.active || _userTouchState.moved) return;
-                _userTouchState.isHold = true;
-                if (navigator.vibrate) {
-                    try { navigator.vibrate(25); } catch (_) {}
-                }
-                el.classList.add('touch-held');
-                el.style.touchAction = 'none';
-            }, 320);
-        }
-
-        function handleUserTouchMove(e, el) {
+        function handleGlobalTouchMove(e) {
             if (!_userTouchState.active) return;
             const touch = e.touches[0];
             if (!touch) return;
@@ -666,10 +658,10 @@
             const dy = touch.clientY - _userTouchState.startY;
             const dist = Math.hypot(dx, dy);
 
-            if (dist > 8) {
+            if (dist > 6) {
                 _userTouchState.moved = true;
 
-                // If not holding yet, finger moved quickly -> this is a scroll gesture, cancel hold timer
+                // If not holding yet, finger moved quickly -> cancel hold timer (scroll gesture)
                 if (!_userTouchState.isHold && _userTouchState.holdTimer) {
                     clearTimeout(_userTouchState.holdTimer);
                     _userTouchState.holdTimer = null;
@@ -681,19 +673,28 @@
                     draggedUserId = _userTouchState.userId;
                     if (e.cancelable) e.preventDefault(); // Stop sidebar scrolling
 
-                    el.classList.add('touch-drag-active');
+                    if (_userTouchState.el) {
+                        _userTouchState.el.classList.add('touch-drag-active');
+                    }
+                    showTouchDragGhost(_userTouchState.nickname, touch.clientX, touch.clientY);
                     updateTouchDropHover(touch.clientX, touch.clientY);
                 }
             }
         }
 
-        function handleUserTouchEnd(e, el) {
+        function handleGlobalTouchEnd(e) {
             if (!_userTouchState.active) return;
+
+            document.removeEventListener('touchmove', handleGlobalTouchMove);
+            document.removeEventListener('touchend', handleGlobalTouchEnd);
+            document.removeEventListener('touchcancel', handleGlobalTouchCancel);
 
             if (_userTouchState.holdTimer) {
                 clearTimeout(_userTouchState.holdTimer);
                 _userTouchState.holdTimer = null;
             }
+
+            hideTouchDragGhost();
 
             _userTouchState.lastTouchTime = Date.now();
             const touch = (e.changedTouches && e.changedTouches[0]) || null;
@@ -707,7 +708,6 @@
             const nickname = _userTouchState.nickname;
 
             if (_userTouchState.el) {
-                _userTouchState.el.style.touchAction = '';
                 _userTouchState.el.classList.remove('touch-held', 'touch-drag-active');
             }
             document.querySelectorAll('.drop-hover').forEach(h => h.classList.remove('drop-hover'));
@@ -741,13 +741,18 @@
             draggedUserId = null;
         }
 
-        function handleUserTouchCancel(e, el) {
+        function handleGlobalTouchCancel(e) {
+            document.removeEventListener('touchmove', handleGlobalTouchMove);
+            document.removeEventListener('touchend', handleGlobalTouchEnd);
+            document.removeEventListener('touchcancel', handleGlobalTouchCancel);
+
             if (_userTouchState.holdTimer) {
                 clearTimeout(_userTouchState.holdTimer);
                 _userTouchState.holdTimer = null;
             }
+            hideTouchDragGhost();
+
             if (_userTouchState.el) {
-                _userTouchState.el.style.touchAction = '';
                 _userTouchState.el.classList.remove('touch-held', 'touch-drag-active');
             }
             document.querySelectorAll('.drop-hover').forEach(h => h.classList.remove('drop-hover'));
@@ -761,6 +766,65 @@
             _userTouchState.isHold = false;
             _userTouchState.lastTouchTime = Date.now();
             draggedUserId = null;
+        }
+
+        function handleUserTouchStart(e, el) {
+            if (e.touches.length > 1) return;
+            const touch = e.touches[0];
+            const userId = el.dataset.userId;
+            const nickname = el.dataset.userNickname;
+            const sourceRid = el.closest('.room-item')?.dataset.rid || channelId;
+
+            if (_userTouchState.holdTimer) {
+                clearTimeout(_userTouchState.holdTimer);
+            }
+
+            _userTouchState = {
+                active: true,
+                el: el,
+                userId: userId,
+                nickname: nickname,
+                sourceRid: sourceRid,
+                startX: touch.clientX,
+                startY: touch.clientY,
+                startTime: Date.now(),
+                moved: false,
+                isHold: false,
+                isDragging: false,
+                holdTimer: null,
+                lastTouchTime: Date.now()
+            };
+
+            // Hold timer: 260ms to register as holding down
+            _userTouchState.holdTimer = setTimeout(() => {
+                if (!_userTouchState.active || _userTouchState.moved) return;
+                _userTouchState.isHold = true;
+                if (navigator.vibrate) {
+                    try { navigator.vibrate(20); } catch (_) {}
+                }
+                el.classList.add('touch-held');
+            }, 260);
+
+            // Bind document touch listeners for smooth dragging outside the element
+            document.removeEventListener('touchmove', handleGlobalTouchMove);
+            document.removeEventListener('touchend', handleGlobalTouchEnd);
+            document.removeEventListener('touchcancel', handleGlobalTouchCancel);
+
+            document.addEventListener('touchmove', handleGlobalTouchMove, { passive: false });
+            document.addEventListener('touchend', handleGlobalTouchEnd, { passive: false });
+            document.addEventListener('touchcancel', handleGlobalTouchCancel, { passive: false });
+        }
+
+        function handleUserTouchMove(e, el) {
+            handleGlobalTouchMove(e);
+        }
+
+        function handleUserTouchEnd(e, el) {
+            handleGlobalTouchEnd(e);
+        }
+
+        function handleUserTouchCancel(e, el) {
+            handleGlobalTouchCancel(e);
         }
 
         function showUserVolumeMenu(userId, nickname, x, y) {
@@ -1451,6 +1515,15 @@
         // ---- Drag & drop user moves (admins) ----
         let draggedUserId = null;
 
+        function getUserCurrentRoom(uid) {
+            for (const r in globalRoomList) {
+                if (globalRoomList[r] && globalRoomList[r].users && globalRoomList[r].users[uid]) {
+                    return r;
+                }
+            }
+            return channelId;
+        }
+
         function updateTouchDropHover(clientX, clientY) {
             document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
             const elUnder = document.elementFromPoint(clientX, clientY);
@@ -1463,8 +1536,12 @@
             }
 
             const roomItem = elUnder.closest('.room-item');
-            if (roomItem && roomItem.dataset.rid !== channelId) {
-                roomItem.classList.add('drop-hover');
+            if (roomItem) {
+                const targetRid = roomItem.dataset.rid;
+                const sourceRid = (_userTouchState && _userTouchState.sourceRid) || getUserCurrentRoom(_userTouchState && _userTouchState.userId);
+                if (targetRid && targetRid !== sourceRid) {
+                    roomItem.classList.add('drop-hover');
+                }
             }
         }
 
@@ -1475,10 +1552,12 @@
             const elUnder = document.elementFromPoint(clientX, clientY);
             if (!elUnder) return;
 
+            const sourceRid = (_userTouchState && _userTouchState.sourceRid) || getUserCurrentRoom(uid);
+
             const stageGroup = elUnder.closest('.stage-group');
             if (stageGroup) {
                 const targetRid = stageGroup.closest('.room-item')?.dataset.rid || channelId;
-                if (targetRid !== channelId) {
+                if (targetRid !== sourceRid) {
                     moveUserToChannel(uid, targetRid);
                 } else if (stageGroup.dataset.drop === 'stage') {
                     if (!canSpeakId(uid)) sendAdminAction('to-stage', uid);
@@ -1491,7 +1570,7 @@
             const roomItem = elUnder.closest('.room-item');
             if (roomItem) {
                 const targetRid = roomItem.dataset.rid;
-                if (targetRid && targetRid !== channelId) {
+                if (targetRid && targetRid !== sourceRid) {
                     moveUserToChannel(uid, targetRid);
                 }
             }
@@ -1523,8 +1602,8 @@
 
         function handleUserDragEnd() {
             draggedUserId = null;
+            hideTouchDragGhost();
             if (_userTouchState.el) {
-                _userTouchState.el.style.touchAction = '';
                 _userTouchState.el.classList.remove('touch-held', 'touch-drag-active');
             }
             document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
@@ -1552,7 +1631,8 @@
             const uid = draggedUserId;
             draggedUserId = null;
             if (!uid) return;
-            if (rid !== channelId) {
+            const sourceRid = getUserCurrentRoom(uid);
+            if (rid !== sourceRid) {
                 moveUserToChannel(uid, rid);
                 return;
             }
@@ -1568,7 +1648,13 @@
             e.preventDefault();
             e.stopPropagation();
             const item = e.currentTarget.closest('.room-item');
-            if (item) item.classList.add('drop-hover');
+            if (item) {
+                const targetRid = item.dataset.rid;
+                const sourceRid = getUserCurrentRoom(draggedUserId);
+                if (targetRid && targetRid !== sourceRid) {
+                    item.classList.add('drop-hover');
+                }
+            }
         }
 
         function handleChannelDragLeave(e) {
@@ -1583,7 +1669,8 @@
             if (item) item.classList.remove('drop-hover');
             const uid = draggedUserId;
             draggedUserId = null;
-            if (uid && rid !== channelId) moveUserToChannel(uid, rid);
+            const sourceRid = getUserCurrentRoom(uid);
+            if (uid && rid && rid !== sourceRid) moveUserToChannel(uid, rid);
         }
 
         function moveUserToChannel(uid, destChannel) {

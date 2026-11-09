@@ -2219,12 +2219,31 @@ video.active + .avatar-layer { display: none !important; }
 .knock-waiting {
     position: fixed;
     inset: 0;
-    z-index: 90;
+    z-index: 500;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 16px;
     background: var(--bg-primary);
+}
+
+#touchDragGhost {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 9999px;
+    background: var(--md-surface-container-highest, #27272a);
+    border: 1.5px solid var(--md-primary, #6366f1);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5), 0 0 12px rgba(99, 102, 241, 0.4);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    transform: translate(-50%, -100%) scale(1.05);
+    white-space: nowrap;
 }
 .knock-waiting-card {
     max-width: 380px;

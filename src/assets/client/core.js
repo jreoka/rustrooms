@@ -3574,6 +3574,15 @@
         function showKnockWaiting(denied) {
             const el = document.getElementById('knockWaiting');
             if (!el) return;
+            // Ensure sidebar is closed and hidden while waiting in lobby
+            const sidebar = document.getElementById('roomSidebar');
+            if (sidebar) sidebar.classList.remove('open');
+            const overlay = document.getElementById('sidebarOverlay');
+            if (overlay) overlay.classList.remove('open');
+            document.body.classList.remove('sidebar-open');
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            if (sidebarToggle) sidebarToggle.classList.add('hidden');
+
             document.getElementById('knockWaitingTitle').textContent = denied ? 'Request denied' : 'Waiting to be let in';
             document.getElementById('knockWaitingText').textContent = denied
                 ? 'An admin declined your request to join this room.'
