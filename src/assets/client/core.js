@@ -721,6 +721,30 @@
         let statsUpdateInterval = null;
         let prevStatsData = {};
 
+        function positionStatsWindow() {
+            const statsWindow = document.getElementById('statsWindow');
+            const statusPillWrapper = document.getElementById('statusPillWrapper');
+            if (!statsWindow || !statusPillWrapper || !statsWindowVisible) return;
+
+            const rect = statusPillWrapper.getBoundingClientRect();
+            const margin = 12;
+
+            const vpHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+            const vpWidth = window.visualViewport ? window.visualViewport.width : window.innerWidth;
+
+            const top = Math.max(margin, Math.round(rect.bottom + 8));
+            const maxAvailableHeight = Math.max(160, Math.floor(vpHeight - top - margin));
+
+            const menuWidth = Math.min(320, vpWidth - (margin * 2));
+            const pillRight = Math.round(vpWidth - rect.right);
+            const maxRight = Math.max(margin, Math.floor(vpWidth - menuWidth - margin));
+            const right = Math.min(Math.max(margin, pillRight), maxRight);
+
+            statsWindow.style.top = `${top}px`;
+            statsWindow.style.right = `${right}px`;
+            statsWindow.style.maxHeight = `${maxAvailableHeight}px`;
+        }
+
         function toggleStatsWindow() {
             const statsWindow = document.getElementById('statsWindow');
             const statusPillWrapper = document.getElementById('statusPillWrapper');
@@ -729,11 +753,9 @@
             statsWindowVisible = !statsWindowVisible;
 
             if (statsWindowVisible) {
-                const rect = statusPillWrapper.getBoundingClientRect();
-                const top = rect.bottom + window.scrollY + 8;
-                const right = window.innerWidth - rect.right + window.scrollX;
-                statsWindow.style.top = `${top}px`;
-                statsWindow.style.right = `${right}px`;
+                const statsContent = statsWindow.querySelector('.stats-content');
+                if (statsContent) statsContent.scrollTop = 0;
+                positionStatsWindow();
                 statsWindow.classList.add('visible');
                 prevStatsData = {};
                 startStatsUpdate();
@@ -741,6 +763,15 @@
                 statsWindow.classList.remove('visible');
                 stopStatsUpdate();
             }
+        }
+
+        window.addEventListener('resize', () => {
+            if (statsWindowVisible) positionStatsWindow();
+        });
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', () => {
+                if (statsWindowVisible) positionStatsWindow();
+            });
         }
 
         document.addEventListener('click', (event) => {
