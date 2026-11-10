@@ -915,7 +915,7 @@ input[type=range]::-moz-range-thumb {
     position: relative;
     width: 112px;
     height: 112px;
-    border-radius: 50%;
+    border-radius: var(--radius-xl);
     overflow: hidden;
     border: 1px solid var(--md-outline-variant);
     background: var(--md-surface-container-high);
@@ -1332,7 +1332,7 @@ video.active + .avatar-layer { display: none !important; }
     position: relative;
     width: 28px;
     height: 28px;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     background: var(--md-surface-container-highest);
     border: 1px solid var(--md-outline-variant);
     display: flex;
@@ -1346,7 +1346,7 @@ video.active + .avatar-layer { display: none !important; }
     width: 100%;
     height: 100%;
     object-fit: cover;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
 }
 .mini-avatar-placeholder {
     font-size: 11px;
@@ -1833,6 +1833,9 @@ video.active + .avatar-layer { display: none !important; }
 #inviteWelcomeOverlay,
 #cropModal {
     background: var(--bg-primary);
+}
+.croppie-container .cr-viewport {
+    border-radius: var(--radius-xl);
 }
 #configOverlay {
     background: var(--bg-primary);
