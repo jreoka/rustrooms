@@ -576,7 +576,7 @@ async fn apply_distributed_message(
         "user-left" | "user-kicked" | "user-banned" => {
             let mut removed_knock = false;
             if msg.msg_type == "user-banned" {
-                let pending_knock_tx = {
+                let (pending_knock_tx, removed_remote_pending) = {
                     let mut lock = state.admin_rooms.lock().await;
                     let a = lock.entry(msg.room_id.clone()).or_default();
                     a.banned.insert(msg.user_id.clone());
@@ -585,18 +585,26 @@ async fn apply_distributed_message(
                     a.audience.remove(&msg.user_id);
                     a.forced.remove(&msg.user_id);
                     a.approved.remove(&msg.user_id);
+                    let mut removed_remote = false;
                     for list in a.remote_pending.values_mut() {
+                        let prev_len = list.len();
                         list.retain(|item| {
                             item.get("id").and_then(|v| v.as_str()) != Some(msg.user_id.as_str())
                         });
+                        if list.len() < prev_len {
+                            removed_remote = true;
+                        }
                     }
-                    a.pending.remove(&msg.user_id).map(|p| p.tx)
+                    (a.pending.remove(&msg.user_id).map(|p| p.tx), removed_remote)
                 };
                 if let Some(ptx) = pending_knock_tx {
                     removed_knock = true;
                     let denied = crate::admin::signal_text("knock-denied", None, None);
                     let _ = ptx.try_send(Ok(Message::Text(denied.into())));
                     let _ = ptx.try_send(Ok(Message::Close(None)));
+                }
+                if removed_knock || removed_remote_pending {
+                    removed_knock = true;
                     crate::admin::send_knock_update(state, &msg.room_id).await;
                 }
                 crate::admin::persist_state(state).await;

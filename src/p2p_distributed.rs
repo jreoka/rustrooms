@@ -394,11 +394,24 @@ pub(crate) fn resolve_udp_peer(raw: &str) -> Vec<SocketAddr> {
     if trimmed.is_empty() {
         return Vec::new();
     }
-    let target = trimmed.strip_prefix("udp://").unwrap_or(trimmed);
+    let target = trimmed
+        .strip_prefix("udp://")
+        .unwrap_or(trimmed)
+        .trim_end_matches('/');
     if let Ok(addrs) = target.to_socket_addrs() {
         let list: Vec<SocketAddr> = addrs.collect();
         if !list.is_empty() {
             return list;
+        }
+    }
+    if let Ok(parsed) = url::Url::parse(trimmed)
+        && let (Some(host), Some(port)) = (parsed.host_str(), parsed.port())
+    {
+        if let Ok(addrs) = (host, port).to_socket_addrs() {
+            let list: Vec<SocketAddr> = addrs.collect();
+            if !list.is_empty() {
+                return list;
+            }
         }
     }
     parse_udp_peer_addr(raw).into_iter().collect()
@@ -2300,6 +2313,15 @@ mod tests {
             Some("ws://192.168.1.25:3000/cluster-ws")
         );
         assert!(normalize_ws_peer_url("udp://192.168.1.25:3000", "ws").is_none());
+    }
+
+    #[test]
+    fn resolve_udp_peer_handles_schemes_and_trailing_slashes() {
+        let expected: SocketAddr = "127.0.0.1:4567".parse().unwrap();
+        assert_eq!(resolve_udp_peer("127.0.0.1:4567"), vec![expected]);
+        assert_eq!(resolve_udp_peer("udp://127.0.0.1:4567/"), vec![expected]);
+        assert_eq!(resolve_udp_peer("ws://127.0.0.1:4567/cluster-ws"), vec![expected]);
+        assert!(resolve_udp_peer("").is_empty());
     }
 
     #[test]

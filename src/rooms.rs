@@ -810,6 +810,13 @@ pub(crate) async fn handle_socket(
                                         // becomes the creator id and an admin.
                                         admin_state.creator_id = Some(user_id.clone());
                                         admin_state.admins.insert(user_id.clone());
+                                        if let Some(k) = admin_key.as_deref() {
+                                            admin_state.key_hash = Some(crate::admin::key_hash(
+                                                &state.server_secret,
+                                                &room_id,
+                                                k,
+                                            ));
+                                        }
                                         admin_state_changed = true;
                                     }
                                     let bypass_lobby = key_ok

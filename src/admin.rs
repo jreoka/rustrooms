@@ -51,7 +51,20 @@ pub(crate) fn verify_key(secret: &[u8], room_id: &str, key: &str, stored_hash: &
         return false;
     }
     let candidate = key_hash(secret, room_id, key);
-    constant_time_eq(candidate.as_bytes(), stored_hash.as_bytes())
+    if constant_time_eq(candidate.as_bytes(), stored_hash.as_bytes()) {
+        return true;
+    }
+    // Backward compatibility for persisted admin state created before v1 domain-separated hashing.
+    let legacy = legacy_key_hash(secret, room_id, key);
+    constant_time_eq(legacy.as_bytes(), stored_hash.as_bytes())
+}
+
+fn legacy_key_hash(secret: &[u8], room_id: &str, key: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
+    mac.update(room_id.as_bytes());
+    mac.update(b".");
+    mac.update(key.as_bytes());
+    hex(&mac.finalize().into_bytes())
 }
 
 // ---- Room admin messaging helpers (used by rooms.rs and distributed.rs) ----
@@ -549,6 +562,14 @@ mod tests {
         assert!(!verify_key(SECRET, "room-a", &issue_key(), &hash));
         assert!(!verify_key(b"other-secret-other-secret-32by", "room-a", &key, &hash));
         assert!(!verify_key(SECRET, "room-a", "", &hash));
+    }
+
+    #[test]
+    fn legacy_key_hash_verifies_for_backward_compatibility() {
+        let key = issue_key();
+        let legacy_hash = legacy_key_hash(SECRET, "room-a", &key);
+        assert!(verify_key(SECRET, "room-a", &key, &legacy_hash));
+        assert!(!verify_key(SECRET, "room-b", &key, &legacy_hash));
     }
 
     #[test]

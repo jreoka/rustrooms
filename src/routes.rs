@@ -26,22 +26,27 @@ fn encode_path_segment(value: &str) -> String {
 /// Origin scheme for absolute embed URLs: honor a reverse proxy's
 /// `X-Forwarded-Proto`, then fall back to https (production default).
 fn request_scheme(headers: &axum::http::HeaderMap) -> &'static str {
-    match headers
+    if let Some(proto) = headers
         .get("x-forwarded-proto")
         .and_then(|value| value.to_str().ok())
+        && let Some(first) = proto.split(',').next()
+        && first.trim().eq_ignore_ascii_case("http")
     {
-        Some(proto) if proto.eq_ignore_ascii_case("http") => "http",
-        Some(_) => "https",
-        None => "https",
+        return "http";
     }
+    "https"
 }
 
 fn append_query(target: &str, uri: &Uri) -> String {
-    if let Some(q) = uri.query().filter(|q| !q.is_empty()) {
-        format!("{target}?{q}")
-    } else {
-        target.to_string()
+    if let Some(q) = uri.query().filter(|q| !q.is_empty())
+        && !q.chars().any(char::is_control)
+    {
+        let candidate = format!("{target}?{q}");
+        if header::HeaderValue::try_from(&candidate).is_ok() {
+            return candidate;
+        }
     }
+    target.to_string()
 }
 
 pub(crate) fn host_is_allowed(headers: &axum::http::HeaderMap, allowed_host: &str) -> bool {
@@ -63,13 +68,29 @@ fn origin_matches_request_host(headers: &axum::http::HeaderMap) -> bool {
         return false;
     };
 
-    let authority_port = authority
-        .port_u16()
-        .or_else(|| match request_scheme(headers) {
-            "https" => Some(443),
-            "http" => Some(80),
-            _ => None,
-        });
+    let is_loopback = authority.host().eq_ignore_ascii_case("localhost")
+        || authority.host() == "127.0.0.1"
+        || authority.host() == "[::1]"
+        || authority.host() == "::1";
+
+    let expected_scheme = if headers.get("x-forwarded-proto").is_none()
+        && is_loopback
+        && origin.scheme().eq_ignore_ascii_case("http")
+    {
+        "http"
+    } else {
+        request_scheme(headers)
+    };
+
+    if !origin.scheme().eq_ignore_ascii_case(expected_scheme) {
+        return false;
+    }
+
+    let authority_port = authority.port_u16().or(match expected_scheme {
+        "https" => Some(443),
+        "http" => Some(80),
+        _ => None,
+    });
 
     let origin_port = origin.port_or_known_default();
 
@@ -441,5 +462,36 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             response.headers().get(header::LOCATION).unwrap(),
             "/new?name=custom&password=secret"
         );
+    }
+
+    #[test]
+    fn append_query_handles_queries_safely() {
+        let uri = axum::http::Uri::from_static("/new/?a=1&b=2");
+        assert_eq!(append_query("/new", &uri), "/new?a=1&b=2");
+
+        let uri_empty = axum::http::Uri::from_static("/new/?");
+        assert_eq!(append_query("/new", &uri_empty), "/new");
+
+        let uri_no_query = axum::http::Uri::from_static("/new/");
+        assert_eq!(append_query("/new", &uri_no_query), "/new");
+    }
+
+    #[test]
+    fn websocket_origin_allows_local_http_and_rejects_cross_scheme() {
+        let mut headers = axum::http::HeaderMap::new();
+        // Localhost HTTP on port 80 / loopback without forwarded-proto
+        headers.insert(header::HOST, "localhost".parse().unwrap());
+        headers.insert(header::ORIGIN, "http://localhost".parse().unwrap());
+        assert!(origin_matches_request_host(&headers));
+
+        // Reject plain HTTP origin when request is HTTPS via X-Forwarded-Proto
+        headers.insert(header::HOST, "example.com".parse().unwrap());
+        headers.insert(header::ORIGIN, "http://example.com".parse().unwrap());
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(!origin_matches_request_host(&headers));
+
+        // Multi-proxy forwarded-proto list: "http, https"
+        headers.insert("x-forwarded-proto", "http, https".parse().unwrap());
+        assert!(origin_matches_request_host(&headers));
     }
 }
