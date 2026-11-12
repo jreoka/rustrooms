@@ -1,4 +1,5 @@
 use crate::{
+    admin::constant_time_eq,
     distributed::{
         cleanup_distributed_node, distributed_user_data, is_valid_distributed_message,
         process_distributed_message, reconcile_distributed_node, schedule_empty_room_cleanup,
@@ -284,17 +285,6 @@ pub(crate) fn derive_cluster_auth_token(cluster_key: &str) -> String {
         .collect()
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 pub(crate) fn verify_cluster_auth(cluster_key: &str, provided: &str) -> bool {
     if cluster_key.is_empty() || provided.is_empty() {
         return false;
@@ -384,10 +374,8 @@ pub(crate) fn parse_udp_peer_addr(raw: &str) -> Option<SocketAddr> {
     if trimmed.is_empty() {
         return None;
     }
-    if let Some(rest) = trimmed.strip_prefix("udp://") {
-        return rest.parse::<SocketAddr>().ok();
-    }
-    if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+    let target = trimmed.strip_prefix("udp://").unwrap_or(trimmed);
+    if let Ok(addr) = target.parse::<SocketAddr>() {
         return Some(addr);
     }
     if let Ok(parsed) = url::Url::parse(trimmed)
@@ -398,6 +386,22 @@ pub(crate) fn parse_udp_peer_addr(raw: &str) -> Option<SocketAddr> {
         return Some(SocketAddr::new(ip, port));
     }
     None
+}
+
+pub(crate) fn resolve_udp_peer(raw: &str) -> Vec<SocketAddr> {
+    use std::net::ToSocketAddrs;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let target = trimmed.strip_prefix("udp://").unwrap_or(trimmed);
+    if let Ok(addrs) = target.to_socket_addrs() {
+        let list: Vec<SocketAddr> = addrs.collect();
+        if !list.is_empty() {
+            return list;
+        }
+    }
+    parse_udp_peer_addr(raw).into_iter().collect()
 }
 
 pub(crate) fn load_p2p_config_from_env(http_port: u16) -> Option<P2pConfig> {
@@ -707,7 +711,7 @@ pub(crate) fn spawn_p2p_distributed(
 
     // 3. Seed static peers from CLUSTER_PEERS / PEERS.
     for peer in &config.peers {
-        if let Some(udp_addr) = parse_udp_peer_addr(peer) {
+        for udp_addr in resolve_udp_peer(peer) {
             let rt = runtime.clone();
             tokio::spawn(async move {
                 add_udp_candidate(&rt, udp_addr).await;

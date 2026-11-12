@@ -341,6 +341,7 @@ pub(crate) async fn handle_socket(
 
                     if parsed.msg_type == "leave" && is_joined {
                         intentional_leave = true;
+                        crate::admin::delete_resume_token(&state, &room_id, &user_id).await;
                         break;
                     }
 
@@ -599,19 +600,21 @@ pub(crate) async fn handle_socket(
                                     .map(|channel| channel.keys().cloned().collect())
                                     .unwrap_or_default();
 
-                                let remote_member = {
+                                let (remote_member, remote_room_has_users) = {
                                     let rl = remote_users.lock().await;
-                                    rl.get(&room_id)
-                                        .map(|room| {
-                                            room.values().any(|c| c.contains_key(&user_id))
-                                        })
-                                        .unwrap_or(false)
+                                    if let Some(room) = rl.get(&room_id) {
+                                        let member = room.values().any(|c| c.contains_key(&user_id));
+                                        let has_users = room.values().any(|c| !c.is_empty());
+                                        (member, has_users)
+                                    } else {
+                                        (false, false)
+                                    }
                                 };
                                 let (local_member, room_preexisting, local_channel_preexists, seat_active_local, occupied_local_ids) = {
                                     let rl = rooms.lock().await;
                                     if let Some(room) = rl.get(&room_id) {
                                         let lm = room.values().any(|c| c.contains_key(&user_id));
-                                        let rp = remote_member || room.values().any(|c| !c.is_empty());
+                                        let rp = remote_room_has_users || room.values().any(|c| !c.is_empty());
                                         let lcp = room.contains_key(&channel_id);
                                         let sal = room
                                             .get(&channel_id)
@@ -622,7 +625,7 @@ pub(crate) async fn handle_socket(
                                             .unwrap_or_default();
                                         (lm, rp, lcp, sal, oli)
                                     } else {
-                                        (false, remote_member, false, false, HashSet::new())
+                                        (false, remote_room_has_users, false, false, HashSet::new())
                                     }
                                 };
                                 let already_member = remote_member || local_member;
@@ -736,6 +739,9 @@ pub(crate) async fn handle_socket(
                                 } else {
                                     false
                                 };
+                                if seat_held_other_channel && (already_member || room_resume_ok || key_ok_pre) {
+                                    finalize_held_seat(&state, &room_id, &user_id, None, true).await;
+                                }
                                 let takeover = (resume_ok || key_ok_pre)
                                     && (seat_held
                                         || seat_active_local
@@ -748,21 +754,11 @@ pub(crate) async fn handle_socket(
                                         .lock()
                                         .await
                                         .remove(&(room_id.clone(), user_id.clone()));
-                                } else if !pre_approved_knock {
+                                } else {
                                     user_id = unique_user_id(user_id, |candidate| {
                                         occupied_local_ids.contains(candidate)
                                             || occupied_remote_ids.contains(candidate)
                                     });
-                                } else if occupied_local_ids.contains(&user_id)
-                                    || occupied_remote_ids.contains(&user_id)
-                                {
-                                    user_id = unique_user_id(user_id, |candidate| {
-                                        occupied_local_ids.contains(candidate)
-                                            || occupied_remote_ids.contains(candidate)
-                                    });
-                                }
-                                if seat_held_other_channel && (already_member || room_resume_ok || key_ok_pre) {
-                                    finalize_held_seat(&state, &room_id, &user_id, None, true).await;
                                 }
 
                                 // ---- Admin gate: creator creation, bans, lobby ----
@@ -810,13 +806,9 @@ pub(crate) async fn handle_socket(
                                         })
                                         .unwrap_or(false);
                                     if key_ok {
-                                        // The creator is back: their current
-                                        // identity becomes the creator id.
-                                        if let Some(prev_creator) = admin_state.creator_id.replace(user_id.clone())
-                                            && prev_creator != user_id
-                                        {
-                                            admin_state.admins.remove(&prev_creator);
-                                        }
+                                        // The creator is back: their current identity
+                                        // becomes the creator id and an admin.
+                                        admin_state.creator_id = Some(user_id.clone());
                                         admin_state.admins.insert(user_id.clone());
                                         admin_state_changed = true;
                                     }
@@ -2985,10 +2977,6 @@ pub(crate) async fn channel_status(
         && !host_is_allowed(&headers, allowed_url)
     {
         return axum::http::StatusCode::FORBIDDEN.into_response();
-    }
-    let mut channel_id = channel_id;
-    if channel_id.eq_ignore_ascii_case("general") {
-        channel_id = "General".to_string();
     }
     if !is_valid_room_id(&room_id) {
         return axum::http::StatusCode::BAD_REQUEST.into_response();

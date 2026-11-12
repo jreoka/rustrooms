@@ -574,6 +574,7 @@ async fn apply_distributed_message(
             }
         }
         "user-left" | "user-kicked" | "user-banned" => {
+            let mut removed_knock = false;
             if msg.msg_type == "user-banned" {
                 let pending_knock_tx = {
                     let mut lock = state.admin_rooms.lock().await;
@@ -592,6 +593,7 @@ async fn apply_distributed_message(
                     a.pending.remove(&msg.user_id).map(|p| p.tx)
                 };
                 if let Some(ptx) = pending_knock_tx {
+                    removed_knock = true;
                     let denied = crate::admin::signal_text("knock-denied", None, None);
                     let _ = ptx.try_send(Ok(Message::Text(denied.into())));
                     let _ = ptx.try_send(Ok(Message::Close(None)));
@@ -688,7 +690,7 @@ async fn apply_distributed_message(
                 false
             };
 
-            if !removed_remote && !removed_local {
+            if !removed_remote && !removed_local && !removed_knock {
                 return;
             }
             // When the victim was local, the removal block above already

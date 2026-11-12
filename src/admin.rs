@@ -28,13 +28,14 @@ pub(crate) fn issue_key() -> String {
 
 pub(crate) fn key_hash(secret: &[u8], room_id: &str, key: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
+    mac.update(b"key:v1:");
     mac.update(room_id.as_bytes());
-    mac.update(b".");
+    mac.update(b"\0");
     mac.update(key.as_bytes());
     hex(&mac.finalize().into_bytes())
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

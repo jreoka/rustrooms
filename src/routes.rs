@@ -23,6 +23,27 @@ fn encode_path_segment(value: &str) -> String {
     url.path().trim_start_matches('/').to_string()
 }
 
+/// Origin scheme for absolute embed URLs: honor a reverse proxy's
+/// `X-Forwarded-Proto`, then fall back to https (production default).
+fn request_scheme(headers: &axum::http::HeaderMap) -> &'static str {
+    match headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(proto) if proto.eq_ignore_ascii_case("http") => "http",
+        Some(_) => "https",
+        None => "https",
+    }
+}
+
+fn append_query(target: &str, uri: &Uri) -> String {
+    if let Some(q) = uri.query().filter(|q| !q.is_empty()) {
+        format!("{target}?{q}")
+    } else {
+        target.to_string()
+    }
+}
+
 pub(crate) fn host_is_allowed(headers: &axum::http::HeaderMap, allowed_host: &str) -> bool {
     request_host(headers).is_some_and(|host| host.eq_ignore_ascii_case(allowed_host))
 }
@@ -42,9 +63,20 @@ fn origin_matches_request_host(headers: &axum::http::HeaderMap) -> bool {
         return false;
     };
 
-    let port_matches = match authority.port_u16() {
-        Some(request_port) => origin.port_or_known_default() == Some(request_port),
-        None => origin.port().is_none(),
+    let authority_port = authority
+        .port_u16()
+        .or_else(|| match request_scheme(headers) {
+            "https" => Some(443),
+            "http" => Some(80),
+            _ => None,
+        });
+
+    let origin_port = origin.port_or_known_default();
+
+    let port_matches = match (authority_port, origin_port) {
+        (Some(ap), Some(op)) => ap == op,
+        (None, None) => true,
+        _ => false,
     };
     origin_host.eq_ignore_ascii_case(authority.host()) && port_matches
 }
@@ -103,11 +135,15 @@ pub(crate) async fn new_room(
     Ok(Redirect::to(&format!("/{}", encode_path_segment(&room_id))))
 }
 
-pub(crate) async fn redirect_room_trailing_slash(Path(room_id): Path<String>) -> Redirect {
+pub(crate) async fn redirect_room_trailing_slash(
+    Path(room_id): Path<String>,
+    uri: Uri,
+) -> Redirect {
     // Validate before echoing into the Location header: control characters
     // (e.g. %0d%0a) would make Redirect::to panic.
     if is_valid_room_id(&room_id) {
-        Redirect::to(&format!("/{}", encode_path_segment(&room_id)))
+        let path = format!("/{}", encode_path_segment(&room_id));
+        Redirect::to(&append_query(&path, &uri))
     } else {
         Redirect::to("/")
     }
@@ -115,50 +151,41 @@ pub(crate) async fn redirect_room_trailing_slash(Path(room_id): Path<String>) ->
 
 pub(crate) async fn redirect_channel_trailing_slash(
     Path((room_id, channel_id)): Path<(String, String)>,
+    uri: Uri,
 ) -> Redirect {
     if is_valid_room_id(&room_id)
         && let Some(channel_id) = normalize_channel_id(&channel_id)
     {
-        Redirect::to(&format!(
+        let path = format!(
             "/{}/{}",
             encode_path_segment(&room_id),
             encode_path_segment(&channel_id)
-        ))
+        );
+        Redirect::to(&append_query(&path, &uri))
     } else {
         Redirect::to("/")
     }
 }
 
-pub(crate) async fn redirect_new_trailing_slash() -> Redirect {
-    Redirect::to("/new")
+pub(crate) async fn redirect_new_trailing_slash(uri: Uri) -> Redirect {
+    Redirect::to(&append_query("/new", &uri))
 }
 
 pub(crate) async fn redirect_ws_trailing_slash(
     Path((room_id, channel_id)): Path<(String, String)>,
+    uri: Uri,
 ) -> Redirect {
     if is_valid_room_id(&room_id)
         && let Some(channel_id) = normalize_channel_id(&channel_id)
     {
-        Redirect::to(&format!(
+        let path = format!(
             "/ws/{}/{}",
             encode_path_segment(&room_id),
             encode_path_segment(&channel_id)
-        ))
+        );
+        Redirect::to(&append_query(&path, &uri))
     } else {
         Redirect::to("/")
-    }
-}
-
-/// Origin scheme for absolute embed URLs: honor a reverse proxy's
-/// `X-Forwarded-Proto`, then fall back to https (production default).
-fn request_scheme(headers: &axum::http::HeaderMap) -> &'static str {
-    match headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-    {
-        Some(proto) if proto.eq_ignore_ascii_case("http") => "http",
-        Some(_) => "https",
-        None => "https",
     }
 }
 
@@ -244,7 +271,6 @@ pub(crate) async fn index(
 
 pub(crate) async fn ws_handler(
     Path((room_id, channel_id)): Path<(String, String)>,
-    Query(_): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
@@ -394,15 +420,26 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
 
     #[tokio::test]
     async fn trailing_slash_redirects_percent_encode_path_segments() {
-        let response = redirect_channel_trailing_slash(Path((
-            "room name".to_string(),
-            "chat ? #".to_string(),
-        )))
+        let uri = axum::http::Uri::from_static("/room%20name/chat%20%3F%20%23/");
+        let response = redirect_channel_trailing_slash(
+            Path(("room name".to_string(), "chat ? #".to_string())),
+            uri,
+        )
         .await
         .into_response();
         assert_eq!(
             response.headers().get(header::LOCATION).unwrap(),
             "/room%20name/chat%20%3F%20%23"
+        );
+    }
+
+    #[tokio::test]
+    async fn trailing_slash_redirects_preserve_query_parameters() {
+        let uri = axum::http::Uri::from_static("/new/?name=custom&password=secret");
+        let response = redirect_new_trailing_slash(uri).await.into_response();
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "/new?name=custom&password=secret"
         );
     }
 }
