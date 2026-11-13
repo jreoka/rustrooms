@@ -1,4 +1,4 @@
-import { Rnnoise, DenoiseState } from './rnnoise.js';
+import { Rnnoise } from './rnnoise.js';
 
 class RnnoiseProcessor extends AudioWorkletProcessor {
     static get parameterDescriptors() {
@@ -18,7 +18,6 @@ class RnnoiseProcessor extends AudioWorkletProcessor {
         this.outputQueue = [];
         this.denoiseState = null;
         this.ready = false;
-        this.frameCount = 0;
         this.prebufferCount = 0;
         this.minPrebuffer = 2; // Number of frames to buffer before starting output
 

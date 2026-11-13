@@ -114,7 +114,7 @@ pub(crate) async fn new_room(
     }
     if let Some(ref required_pass) = state.room_creation_password {
         match params.get("password") {
-            Some(p) if p == required_pass => {}
+            Some(p) if crate::admin::constant_time_eq(p.as_bytes(), required_pass.as_bytes()) => {}
             _ => return Err((axum::http::StatusCode::UNAUTHORIZED, "Unauthorized")),
         }
     }
@@ -210,6 +210,22 @@ pub(crate) async fn redirect_ws_trailing_slash(
     }
 }
 
+/// Escape text for safe interpolation into HTML text nodes and quoted attribute values.
+pub(crate) fn escape_html(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Build an absolute origin (scheme + authority) for embed URLs.
 fn embed_origin(headers: &axum::http::HeaderMap, authority: &Authority) -> String {
     format!("{}://{}", request_scheme(headers), authority)
@@ -217,7 +233,8 @@ fn embed_origin(headers: &axum::http::HeaderMap, authority: &Authority) -> Strin
 
 /// Open Graph / Twitter Card tags for the landing page.
 fn base_social_meta(origin: &str) -> String {
-    let icon = format!("{}/icon.svg", origin);
+    let origin = escape_html(origin);
+    let icon = format!("{origin}/icon.svg");
     format!(
         r##"<meta property="og:site_name" content="RustRooms">
 <meta property="og:type" content="website">
@@ -234,7 +251,9 @@ fn base_social_meta(origin: &str) -> String {
 
 /// Open Graph / Twitter Card tags for a call (room/channel) link.
 fn call_social_meta(origin: &str, path: &str) -> String {
-    let icon = format!("{}/icon.svg", origin);
+    let origin = escape_html(origin);
+    let path = escape_html(path);
+    let icon = format!("{origin}/icon.svg");
     format!(
         r##"<meta property="og:site_name" content="RustRooms">
 <meta property="og:type" content="website">
@@ -493,5 +512,16 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         // Multi-proxy forwarded-proto list: "http, https"
         headers.insert("x-forwarded-proto", "http, https".parse().unwrap());
         assert!(origin_matches_request_host(&headers));
+    }
+
+    #[test]
+    fn social_meta_escapes_html_special_characters() {
+        let meta = call_social_meta(
+            "https://example.com\"><script>alert(1)</script>",
+            "/room'\"<>",
+        );
+        assert!(!meta.contains("<script>"));
+        assert!(meta.contains("&quot;&gt;&lt;script&gt;"));
+        assert!(meta.contains("/room&#39;&quot;&lt;&gt;"));
     }
 }

@@ -958,12 +958,17 @@ async fn apply_distributed_message(
         }
         "admin-update" => {
             if let Some(ref data) = msg.data {
-                {
+                let approved_ptxs = {
                     let mut lock = state.admin_rooms.lock().await;
-                    lock.entry(msg.room_id.clone())
-                        .or_default()
-                        .apply_public_state(data);
-                }
+                    let admin_state = lock.entry(msg.room_id.clone()).or_default();
+                    admin_state.apply_public_state(data);
+                    if !admin_state.lobby {
+                        crate::admin::drain_pending_knocks(admin_state)
+                    } else {
+                        Vec::new()
+                    }
+                };
+                crate::admin::notify_approved_knocks(approved_ptxs);
                 crate::admin::persist_state(state).await;
                 let mut client_data = data.clone();
                 if let Some(obj) = client_data.as_object_mut() {
@@ -1978,6 +1983,52 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         match delivered {
             Message::Text(t) => assert!(t.contains("channel-moved")),
             _ => panic!("expected channel-moved text message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_admin_update_turning_off_lobby_releases_local_pending_knocks() {
+        let state = test_state();
+        let knocker_id = Uuid::new_v4().to_string();
+        let (knocker_tx, mut knocker_rx) = test_spy_channel();
+        {
+            let mut admins = state.admin_rooms.lock().await;
+            let room = admins.entry("room-1".to_string()).or_default();
+            room.lobby = true;
+            room.pending.insert(
+                knocker_id.clone(),
+                PendingKnock {
+                    nickname: "Knocker".to_string(),
+                    channel: "General".to_string(),
+                    tx: knocker_tx,
+                },
+            );
+        }
+
+        let mut update_msg =
+            test_distributed_message_typed("admin-update", "room-1", "", "");
+        update_msg.data = Some(serde_json::json!({
+            "creatorId": Uuid::new_v4().to_string(),
+            "admins": [],
+            "banned": [],
+            "lobby": false,
+            "kind": "regular",
+            "speakers": [],
+            "audience": [],
+            "forced": {}
+        }));
+
+        handle_distributed_message(&update_msg, &state.rooms, &state.remote_users, &state).await;
+
+        let admins = state.admin_rooms.lock().await;
+        let room = admins.get("room-1").unwrap();
+        assert!(!room.lobby);
+        assert!(!room.pending.contains_key(&knocker_id));
+        assert!(room.approved.contains(&knocker_id));
+        let delivered = knocker_rx.try_recv().unwrap().unwrap();
+        match delivered {
+            Message::Text(t) => assert!(t.contains("knock-approved")),
+            _ => panic!("expected knock-approved message"),
         }
     }
 }

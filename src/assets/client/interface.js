@@ -120,31 +120,16 @@
          * entrances and exits stay consistent.
          * ============================================================ */
         const OVERLAY_MS = 300;
-        let _welcomeHideTimer = null;
 
         // Fade the whole welcome screen in; children (title, subtitle,
         // start button) replay their staggered blur-pop automatically
         // because the overlay goes from display:none to visible.
         function showWelcome() {
-            clearTimeout(_welcomeHideTimer);
             const overlay = document.getElementById('welcomeOverlay');
             if (!overlay) return;
-            overlay.classList.remove('welcome-exit');
             overlay.style.display = 'flex';
             renderRecentCalls();
             requestAnimationFrame(() => overlay.classList.add('welcome-enter'));
-        }
-
-        function hideWelcome() {
-            clearTimeout(_welcomeHideTimer);
-            const overlay = document.getElementById('welcomeOverlay');
-            if (!overlay) return;
-            overlay.classList.remove('welcome-enter');
-            overlay.classList.add('welcome-exit');
-            _welcomeHideTimer = setTimeout(() => {
-                overlay.style.display = 'none';
-                overlay.classList.remove('welcome-exit');
-            }, OVERLAY_MS);
         }
 
         // Show a full-screen overlay (config / invite / settings / crop).
@@ -903,17 +888,17 @@
                 <div class="uvm-header">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                     <span class="uvm-name">${escapeHtml(nickname)}</span>
-                    <button class="uvm-close" onclick="closeUserVolumeMenu()">
+                    <button type="button" class="uvm-close">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
                 </div>
                 <div class="uvm-section">
                     <div class="uvm-label">Mic Volume</div>
                     <div class="uvm-slider-row">
-                        <button id="uvm-mute-main" class="${mainMuted ? 'muted' : ''}" onclick="uvmToggleMute('${userId}', 'main')">
+                        <button type="button" id="uvm-mute-main" data-uvm-mute="main" class="${mainMuted ? 'muted' : ''}">
                             ${mainMuted ? volSvgOff : volSvgOn}
                         </button>
-                        <input type="range" min="0" max="1" step="0.05" value="${mainVol}" id="uvm-slider-main" oninput="uvmSetVolume('${userId}', 'main', this.value)">
+                        <input type="range" min="0" max="1" step="0.05" value="${mainVol}" id="uvm-slider-main" data-uvm-slider="main">
                         <span class="uvm-vol-pct" id="uvm-pct-main">${Math.round(mainVol * 100)}%</span>
                     </div>
                 </div>
@@ -924,10 +909,10 @@
                 <div class="uvm-section">
                     <div class="uvm-label">Screen Volume</div>
                     <div class="uvm-slider-row">
-                        <button id="uvm-mute-screen" class="${screenMuted ? 'muted' : ''}" onclick="uvmToggleMute('${userId}', 'screen')">
+                        <button type="button" id="uvm-mute-screen" data-uvm-mute="screen" class="${screenMuted ? 'muted' : ''}">
                             ${screenMuted ? screenSvgOff : screenSvgOn}
                         </button>
-                        <input type="range" min="0" max="1" step="0.05" value="${screenVol}" id="uvm-slider-screen" oninput="uvmSetVolume('${userId}', 'screen', this.value)">
+                        <input type="range" min="0" max="1" step="0.05" value="${screenVol}" id="uvm-slider-screen" data-uvm-slider="screen">
                         <span class="uvm-vol-pct" id="uvm-pct-screen">${Math.round(screenVol * 100)}%</span>
                     </div>
                 </div>
@@ -954,7 +939,7 @@
                     'kick': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>`,
                     'ban': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>`
                 };
-                const abtn = (action, label, danger) => `<button class="uvm-admin-btn${danger ? ' danger' : ''}" onclick="adminMenuAction('${action}', '${userId}')">${icons[action] || ''}<span>${label}</span></button>`;
+                const abtn = (action, label, danger) => `<button type="button" class="uvm-admin-btn${danger ? ' danger' : ''}" data-admin-action="${escapeHtml(action)}">${icons[action] || ''}<span>${label}</span></button>`;
                 let adminHtml = '';
                 if (tCreator) {
                     adminHtml = `<div class="uvm-admin-note">Room creator · Admin</div>`;
@@ -976,6 +961,30 @@
                     <div class="uvm-label">Admin</div>
                     <div class="uvm-admin-list uvm-admin-grid">${adminHtml}</div>
                 </div>`;
+            }
+
+            if (!menu.dataset.uvmDelegated) {
+                menu.dataset.uvmDelegated = '1';
+                menu.addEventListener('click', (e) => {
+                    if (e.target.closest('.uvm-close')) {
+                        closeUserVolumeMenu();
+                        return;
+                    }
+                    const muteBtn = e.target.closest('[data-uvm-mute]');
+                    if (muteBtn && menu.dataset.userId) {
+                        uvmToggleMute(menu.dataset.userId, muteBtn.dataset.uvmMute);
+                        return;
+                    }
+                    const adminBtn = e.target.closest('[data-admin-action]');
+                    if (adminBtn && menu.dataset.userId) {
+                        adminMenuAction(adminBtn.dataset.adminAction, menu.dataset.userId);
+                    }
+                });
+                menu.addEventListener('input', (e) => {
+                    if (e.target.matches('[data-uvm-slider]') && menu.dataset.userId) {
+                        uvmSetVolume(menu.dataset.userId, e.target.dataset.uvmSlider, e.target.value);
+                    }
+                });
             }
 
             menu.innerHTML = html;
@@ -1062,7 +1071,8 @@
             const pct = document.getElementById(`uvm-pct-${type}`);
             if (pct) pct.textContent = Math.round(val * 100) + '%';
 
-            const overlaySlider = document.querySelector(`#vol-row-${type}-${userId} input[type=range]`);
+            const row = document.getElementById(`vol-row-${type}-${userId}`);
+            const overlaySlider = row ? row.querySelector('input[type=range]') : null;
             if (overlaySlider) overlaySlider.value = val;
         };
 
@@ -1291,6 +1301,11 @@
                     return;
                 }
 
+                if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+                if (iosSlowRetryTimer) { clearTimeout(iosSlowRetryTimer); iosSlowRetryTimer = null; }
+                if (desktopSlowRetryTimer) { clearTimeout(desktopSlowRetryTimer); desktopSlowRetryTimer = null; }
+                if (reconnectStatusTimeout) { clearTimeout(reconnectStatusTimeout); reconnectStatusTimeout = null; }
+
                 if (ws) {
                     if (ws.readyState === WebSocket.OPEN) {
                         try { ws.send(JSON.stringify({ type: 'expedite-departure' })); } catch (e) {}
@@ -1315,6 +1330,7 @@
                 peerCamVideoTrackId = {};
                 peerScreenVideoTrackId = {};
                 pendingCandidates = {};
+                activeSpeakers = {};
                 remoteGrid.innerHTML = '';
 
                 roomId = newRoomId;
@@ -1474,20 +1490,21 @@
                     // the cache populated from existing-users / user-joined /
                     // identify / user-update events.
                     const cached = userAvatarCache[uid];
-                    let avatar = u.avatar || (cached ? cached.avatar : null) || null;
-                    let isGif = !!(u.isGif || (cached ? cached.isGif : false));
-                    let staticFrame = u.staticFrame || (cached ? cached.staticFrame : null) || null;
+                    let avatar = safeAvatarSrc(u.avatar || (cached ? cached.avatar : null));
+                    let isGif = !!(avatar && (u.isGif || (cached ? cached.isGif : false)));
+                    let staticFrame = avatar ? safeAvatarSrc(u.staticFrame || (cached ? cached.staticFrame : null)) : null;
                     // The room-list strips avatar payloads and self is never in
                     // the peer cache (existing-users skips self), so use the
                     // live local profile for the local user's own row.
                     if (uid === persistentUserId) {
-                        avatar = userAvatar;
-                        isGif = userAvatarIsGif;
-                        staticFrame = userAvatarStaticFrame;
+                        avatar = safeAvatarSrc(userAvatar);
+                        isGif = !!(avatar && userAvatarIsGif);
+                        staticFrame = avatar ? safeAvatarSrc(userAvatarStaticFrame) : null;
                     }
 
+                    const safeUid = escapeHtml(uid);
                     const rowHtml = `
-                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${uid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" onmouseenter="this.closest('.room-item').draggable=false" onmouseleave="this.closest('.room-item').draggable=true" ondragstart="handleUserDragStart(event, '${uid}')" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchmove="handleUserTouchMove(event, this)" ontouchend="handleUserTouchEnd(event, this)" ontouchcancel="handleUserTouchCancel(event, this)">
+                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${safeUid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" onmouseenter="this.closest('.room-item').draggable=false" onmouseleave="this.closest('.room-item').draggable=true" ondragstart="handleUserDragStart(event, this.dataset.userId)" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchmove="handleUserTouchMove(event, this)" ontouchend="handleUserTouchEnd(event, this)" ontouchcancel="handleUserTouchCancel(event, this)">
                             <div class="user-avatar-wrap">
                                 <div class="mini-avatar">
                                     ${avatar ? (isGif && staticFrame ? `<img src="${escapeHtml(staticFrame)}" data-gif-src="${escapeHtml(avatar)}" data-static-src="${escapeHtml(staticFrame)}">` : `<img src="${escapeHtml(avatar)}">`) : `<div class="mini-avatar-placeholder">${escapeHtml(u.nickname.charAt(0).toUpperCase())}</div>`}
@@ -1542,8 +1559,8 @@
                              ` : ''}
                         </div>
                     </div>
-                    <div class="room-users flex flex-col gap-1 mt-2" ondragover="handleChannelDragOver(event)" ondragleave="handleChannelDragLeave(event)" ondrop="handleUserDropOnChannel(event, '${rid}')">
-                        ${roomAdminState.kind === 'stage' ? stageSectionsHtml(stageRowsHtml, audienceRowsHtml, rid) : stageRowsHtml}
+                    <div class="room-users flex flex-col gap-1 mt-2" ondragover="handleChannelDragOver(event)" ondragleave="handleChannelDragLeave(event)" ondrop="handleUserDropOnChannel(event, this.closest('.room-item').dataset.rid)">
+                        ${roomAdminState.kind === 'stage' ? stageSectionsHtml(stageRowsHtml, audienceRowsHtml) : stageRowsHtml}
                         ${userIds.length === 0 && roomAdminState.kind !== 'stage' ? '<span class="text-[10px] text-zinc-600 italic px-2">Empty</span>' : ''}
                     </div>
                 `;
@@ -1767,14 +1784,14 @@
             sendAdminAction('move', uid, { channelId: destChannel });
         }
 
-        function stageSectionsHtml(stageRows, audienceRows, rid) {
+        function stageSectionsHtml(stageRows, audienceRows) {
             return `
-                <div class="stage-group pointer-events-auto" data-drop="stage" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, '${rid}')">
+                <div class="stage-group pointer-events-auto" data-drop="stage" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, this.closest('.room-item').dataset.rid)">
                     <div class="stage-group-label">On stage</div>
                     ${stageRows || '<div class="stage-empty">Nobody is on the stage right now</div>'}
                 </div>
                 <div class="stage-divider"></div>
-                <div class="stage-group pointer-events-auto" data-drop="audience" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, '${rid}')">
+                <div class="stage-group pointer-events-auto" data-drop="audience" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, this.closest('.room-item').dataset.rid)">
                     <div class="stage-group-label">Listeners</div>
                     ${audienceRows || '<div class="stage-empty">No listeners right now</div>'}
                 </div>`;

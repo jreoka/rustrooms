@@ -211,7 +211,8 @@ pub(crate) struct P2pRuntime {
     known_ws_peers: Mutex<HashSet<String>>,
     known_udp_candidates: Mutex<HashSet<SocketAddr>>,
     active_udp_peers: Mutex<HashMap<String, (SocketAddr, Instant)>>,
-    pending_udp_acks: Mutex<HashSet<(String, usize)>>,
+    pending_udp_acks: Mutex<HashSet<(SocketAddr, String, usize)>>,
+    pending_stun_txs: Mutex<HashMap<[u8; 12], Instant>>,
     reflexive_udp_addr: Mutex<Option<SocketAddr>>,
     local_udp_port: AtomicU16,
     http_port: u16,
@@ -247,6 +248,7 @@ impl P2pRuntime {
             known_udp_candidates: Mutex::new(HashSet::new()),
             active_udp_peers: Mutex::new(HashMap::new()),
             pending_udp_acks: Mutex::new(HashSet::new()),
+            pending_stun_txs: Mutex::new(HashMap::new()),
             reflexive_udp_addr: Mutex::new(None),
             local_udp_port: AtomicU16::new(config.udp_port),
             http_port: config.http_port,
@@ -516,7 +518,7 @@ pub(crate) fn build_stun_binding_request(tx_id: [u8; 12]) -> [u8; 20] {
     pkt
 }
 
-pub(crate) fn parse_stun_binding_response(buf: &[u8]) -> Option<SocketAddr> {
+pub(crate) fn parse_stun_binding_response_with_tx(buf: &[u8]) -> Option<([u8; 12], SocketAddr)> {
     if buf.len() < 20 {
         return None;
     }
@@ -532,7 +534,8 @@ pub(crate) fn parse_stun_binding_response(buf: &[u8]) -> Option<SocketAddr> {
     if cookie != STUN_MAGIC_COOKIE {
         return None;
     }
-    let tx_id = &buf[8..20];
+    let mut tx_id = [0u8; 12];
+    tx_id.copy_from_slice(&buf[8..20]);
 
     let mut offset = 20;
     let end = 20 + msg_len;
@@ -554,7 +557,10 @@ pub(crate) fn parse_stun_binding_response(buf: &[u8]) -> Option<SocketAddr> {
             if family == 0x01 {
                 let xip = u32::from_be_bytes([val[4], val[5], val[6], val[7]]);
                 let ip = Ipv4Addr::from(xip ^ STUN_MAGIC_COOKIE);
-                return Some(SocketAddr::V4(SocketAddrV4::new(ip, port)));
+                let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
+                if port != 0 && !addr.ip().is_unspecified() {
+                    return Some((tx_id, addr));
+                }
             } else if family == 0x02 && attr_len >= 20 {
                 let mut ip_bytes = [0u8; 16];
                 ip_bytes.copy_from_slice(&val[4..20]);
@@ -565,7 +571,10 @@ pub(crate) fn parse_stun_binding_response(buf: &[u8]) -> Option<SocketAddr> {
                 for i in 0..12 {
                     ip_bytes[4 + i] ^= tx_id[i];
                 }
-                return Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::from(ip_bytes)), port));
+                let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::from(ip_bytes)), port);
+                if port != 0 && !addr.ip().is_unspecified() {
+                    return Some((tx_id, addr));
+                }
             }
         } else if attr_type == 0x0001 && attr_len >= 8 {
             // MAPPED-ADDRESS (0x0001)
@@ -573,7 +582,10 @@ pub(crate) fn parse_stun_binding_response(buf: &[u8]) -> Option<SocketAddr> {
             let port = u16::from_be_bytes([val[2], val[3]]);
             if family == 0x01 {
                 let ip = Ipv4Addr::new(val[4], val[5], val[6], val[7]);
-                fallback_mapped = Some(SocketAddr::V4(SocketAddrV4::new(ip, port)));
+                let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
+                if port != 0 && !addr.ip().is_unspecified() {
+                    fallback_mapped = Some((tx_id, addr));
+                }
             }
         }
         let padded = (attr_len + 3) & !3;
@@ -785,7 +797,7 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
         let socket = Arc::new(socket);
 
         // Initial STUN probe to discover reflexive NAT address before first DHT announce.
-        probe_stun_servers(&socket, &config.stun_servers).await;
+        probe_stun_servers(&socket, &runtime, &config.stun_servers).await;
 
         // Task A: Outbound envelope sender over UDP (with per-chunk ACK and retransmission).
         {
@@ -857,7 +869,7 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
                         || ticks.is_multiple_of(10)
                         || runtime.reflexive_udp_addr.lock().await.is_none()
                     {
-                        probe_stun_servers(&socket, &stun_servers).await;
+                        probe_stun_servers(&socket, &runtime, &stun_servers).await;
                     }
 
                     let active_addrs: Vec<SocketAddr> = runtime
@@ -923,14 +935,18 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
             };
             let packet_bytes = &buf[..len];
 
-            // Check if this is a STUN Binding Response.
-            if let Some(reflexive_addr) = parse_stun_binding_response(packet_bytes) {
-                let mut stored = runtime.reflexive_udp_addr.lock().await;
-                if *stored != Some(reflexive_addr) {
-                    println!(
-                        "P2P DISTRIBUTED: Discovered external NAT UDP endpoint via STUN: {reflexive_addr}"
-                    );
-                    *stored = Some(reflexive_addr);
+            // Check if this is a STUN Binding Response matching a recent probe tx_id.
+            if let Some((tx_id, reflexive_addr)) = parse_stun_binding_response_with_tx(packet_bytes)
+            {
+                let valid_tx = runtime.pending_stun_txs.lock().await.remove(&tx_id).is_some();
+                if valid_tx {
+                    let mut stored = runtime.reflexive_udp_addr.lock().await;
+                    if *stored != Some(reflexive_addr) {
+                        println!(
+                            "P2P DISTRIBUTED: Discovered external NAT UDP endpoint via STUN: {reflexive_addr}"
+                        );
+                        *stored = Some(reflexive_addr);
+                    }
                 }
                 continue;
             }
@@ -1036,7 +1052,7 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
                         .pending_udp_acks
                         .lock()
                         .await
-                        .remove(&(transmission_id, index));
+                        .remove(&(src_addr, transmission_id, index));
                 }
                 UdpWirePacket::Chunk {
                     version,
@@ -1085,7 +1101,16 @@ fn spawn_udp_p2p_engine(state: AppState, config: P2pConfig, runtime: Arc<P2pRunt
     });
 }
 
-async fn probe_stun_servers(socket: &UdpSocket, stun_servers: &[String]) {
+async fn probe_stun_servers(
+    socket: &UdpSocket,
+    runtime: &P2pRuntime,
+    stun_servers: &[String],
+) {
+    let now = Instant::now();
+    {
+        let mut txs = runtime.pending_stun_txs.lock().await;
+        txs.retain(|_, sent_at| now.saturating_duration_since(*sent_at) < Duration::from_secs(30));
+    }
     for server in stun_servers {
         let Ok(addrs) = tokio::net::lookup_host(server.as_str()).await else {
             continue;
@@ -1093,6 +1118,7 @@ async fn probe_stun_servers(socket: &UdpSocket, stun_servers: &[String]) {
         for addr in addrs.filter(|a| a.is_ipv4()).take(2) {
             let mut tx_id = [0u8; 12];
             tx_id.copy_from_slice(&Uuid::new_v4().as_bytes()[..12]);
+            runtime.pending_stun_txs.lock().await.insert(tx_id, now);
             let req = build_stun_binding_request(tx_id);
             let _ = socket.send_to(&req, addr).await;
         }
@@ -1105,6 +1131,9 @@ async fn send_envelope_udp(
     envelope: &P2pEnvelope,
     targets: &[SocketAddr],
 ) {
+    if targets.is_empty() {
+        return;
+    }
     let Ok(payload) = serde_json::to_string(envelope) else {
         return;
     };
@@ -1122,9 +1151,11 @@ async fn send_envelope_udp(
 
         {
             let mut pending = runtime.pending_udp_acks.lock().await;
-            for idx in window_start..window_end {
+            for (idx, part) in parts.iter().enumerate().take(window_end).skip(window_start) {
                 if !is_heartbeat {
-                    pending.insert((transmission_id.clone(), idx));
+                    for target in targets {
+                        pending.insert((*target, transmission_id.clone(), idx));
+                    }
                 }
                 let pkt = UdpWirePacket::Chunk {
                     version: PROTOCOL_VERSION,
@@ -1132,7 +1163,7 @@ async fn send_envelope_udp(
                     transmission_id: transmission_id.clone(),
                     index: idx,
                     total,
-                    payload: parts[idx].clone(),
+                    payload: part.clone(),
                 };
                 if let Some(wire) = encode_udp_packet(&runtime.udp_mac_key, &pkt) {
                     encoded_window.push((idx, wire));
@@ -1142,17 +1173,28 @@ async fn send_envelope_udp(
 
         let max_attempts = if is_heartbeat { 1 } else { UDP_MAX_RETRIES };
         for attempt in 0..max_attempts {
-            for (idx, wire) in &encoded_window {
-                let needs_send = is_heartbeat
-                    || attempt == 0
-                    || runtime
-                        .pending_udp_acks
-                        .lock()
-                        .await
-                        .contains(&(transmission_id.clone(), *idx));
-                if needs_send {
+            if is_heartbeat || attempt == 0 {
+                for (_, wire) in &encoded_window {
                     for target in targets {
                         let _ = socket.send_to(wire, *target).await;
+                    }
+                }
+            } else {
+                let to_resend: Vec<(usize, SocketAddr)> = {
+                    let pending = runtime.pending_udp_acks.lock().await;
+                    let mut out = Vec::new();
+                    for (idx, _) in &encoded_window {
+                        for target in targets {
+                            if pending.contains(&(*target, transmission_id.clone(), *idx)) {
+                                out.push((*idx, *target));
+                            }
+                        }
+                    }
+                    out
+                };
+                for (idx, target) in to_resend {
+                    if let Some((_, wire)) = encoded_window.iter().find(|(i, _)| *i == idx) {
+                        let _ = socket.send_to(wire, target).await;
                     }
                 }
             }
@@ -1162,8 +1204,11 @@ async fn send_envelope_udp(
             tokio::time::sleep(Duration::from_millis(UDP_ACK_TIMEOUT_MS)).await;
             let all_acked = {
                 let pending = runtime.pending_udp_acks.lock().await;
-                (window_start..window_end)
-                    .all(|idx| !pending.contains(&(transmission_id.clone(), idx)))
+                (window_start..window_end).all(|idx| {
+                    targets
+                        .iter()
+                        .all(|target| !pending.contains(&(*target, transmission_id.clone(), idx)))
+                })
             };
             if all_acked {
                 break;
@@ -1173,7 +1218,9 @@ async fn send_envelope_udp(
         if !is_heartbeat {
             let mut pending = runtime.pending_udp_acks.lock().await;
             for idx in window_start..window_end {
-                pending.remove(&(transmission_id.clone(), idx));
+                for target in targets {
+                    pending.remove(&(*target, transmission_id.clone(), idx));
+                }
             }
         }
     }
@@ -1953,6 +2000,7 @@ async fn accept_parsed_chunk(
         || chunk.total > max_chunks
         || chunk.index >= chunk.total
         || chunk.payload.len() > max_chunk_size
+        || (chunk.total > 1 && chunk.payload.is_empty())
     {
         return None;
     }
@@ -2351,11 +2399,32 @@ mod tests {
         resp.extend_from_slice(&xport.to_be_bytes());
         resp.extend_from_slice(&xip.to_be_bytes());
 
-        let parsed = parse_stun_binding_response(&resp).expect("valid STUN response");
+        let (parsed_tx, parsed_addr) =
+            parse_stun_binding_response_with_tx(&resp).expect("valid STUN tx response");
+        assert_eq!(parsed_tx, tx_id);
         assert_eq!(
-            parsed,
+            parsed_addr,
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 42), 54321))
         );
+    }
+
+    #[tokio::test]
+    async fn accept_parsed_chunk_rejects_empty_multi_chunk_parts() {
+        let assemblies = Mutex::new(HashMap::new());
+        let chunk = P2pChunk {
+            version: PROTOCOL_VERSION,
+            sender: Uuid::new_v4().to_string(),
+            transmission_id: Uuid::new_v4().to_string(),
+            index: 0,
+            total: 4,
+            payload: String::new(),
+        };
+        assert!(
+            accept_parsed_chunk(chunk, MAX_UDP_CHUNKS, UDP_CHUNK_SIZE, &assemblies)
+                .await
+                .is_none()
+        );
+        assert!(assemblies.lock().await.is_empty());
     }
 
     #[test]

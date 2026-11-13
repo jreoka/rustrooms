@@ -278,6 +278,25 @@
         return decodeGifBytes(dataUrlToBytes(dataUrl), maxDim);
     }
 
+    const MAX_GIF_DIM = 16384;
+    const MAX_GIF_PIXELS = 32000000;
+
+    function readGifPalette(bytes, pos, packed) {
+        if (!(packed & 0x80)) {
+            return { palette: null, pos };
+        }
+        const size = 2 << (packed & 0x07);
+        if (pos + size * 3 > bytes.length) {
+            throw new Error('Invalid GIF: truncated color table');
+        }
+        const palette = [];
+        for (let i = 0; i < size; i++) {
+            palette.push([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
+            pos += 3;
+        }
+        return { palette, pos };
+    }
+
     async function decodeGifBytes(bytes, maxDim) {
         if (bytes.length < 13) {
             throw new Error('Invalid GIF: too short');
@@ -293,18 +312,13 @@
         if (!logicalWidth || !logicalHeight) {
             throw new Error('Invalid GIF: zero dimensions');
         }
-        const packed = bytes[pos++];
-        const bgColorIndex = bytes[pos++];
-        pos++; // pixel aspect ratio
-        let palette = null;
-        if (packed & 0x80) {
-            palette = [];
-            const size = 2 << (packed & 0x07);
-            for (let i = 0; i < size; i++) {
-                palette.push([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
-                pos += 3;
-            }
+        if (logicalWidth > MAX_GIF_DIM || logicalHeight > MAX_GIF_DIM || logicalWidth * logicalHeight > MAX_GIF_PIXELS) {
+            throw new Error('Invalid GIF: dimensions too large');
         }
+        const packed = bytes[pos++];
+        pos += 2; // background color index + pixel aspect ratio
+        let palette = null;
+        ({ palette, pos } = readGifPalette(bytes, pos, packed));
 
         const dim = maxDim || GIF_MAX_CAPTURE_DIM;
         const scale = Math.min(dim / logicalWidth, dim / logicalHeight, 1);
@@ -325,14 +339,20 @@
             const blockType = bytes[pos++];
             if (blockType === 0x3b) break; // trailer
             if (blockType === 0x21) {
+                if (pos >= bytes.length) {
+                    throw new Error('Invalid GIF: truncated extension');
+                }
                 const label = bytes[pos++];
                 if (label === 0xf9) {
                     // Graphic Control Extension
-                    pos++; // block size (4)
-                    const flags = bytes[pos++];
-                    const delayUnits = bytes[pos] | (bytes[pos + 1] << 8); pos += 2;
-                    const transparentIndex = bytes[pos++];
-                    pos++; // block terminator
+                    if (pos + 6 > bytes.length || bytes[pos] < 4 || pos + 1 + bytes[pos] >= bytes.length) {
+                        throw new Error('Invalid GIF: truncated GCE block');
+                    }
+                    const blockSize = bytes[pos++];
+                    const flags = bytes[pos];
+                    const delayUnits = bytes[pos + 1] | (bytes[pos + 2] << 8);
+                    const transparentIndex = bytes[pos + 3];
+                    pos = skipGifSubBlocks(bytes, pos + blockSize);
                     pendingGce = {
                         transparency: (flags & 0x01) !== 0,
                         transparentIndex,
@@ -350,22 +370,28 @@
                 }
             } else if (blockType === 0x2c) {
                 // Image Descriptor
+                if (pos + 9 > bytes.length) {
+                    throw new Error('Invalid GIF: truncated image descriptor');
+                }
                 const left = bytes[pos] | (bytes[pos + 1] << 8); pos += 2;
                 const top = bytes[pos] | (bytes[pos + 1] << 8); pos += 2;
                 const frameWidth = bytes[pos] | (bytes[pos + 1] << 8); pos += 2;
                 const frameHeight = bytes[pos] | (bytes[pos + 1] << 8); pos += 2;
-                const imgPacked = bytes[pos++];
-                let framePalette = palette;
-                if (imgPacked & 0x80) {
-                    framePalette = [];
-                    const size = 2 << (imgPacked & 0x07);
-                    for (let i = 0; i < size; i++) {
-                        framePalette.push([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
-                        pos += 3;
-                    }
+                if (!frameWidth || !frameHeight) {
+                    throw new Error('Invalid GIF: zero frame dimensions');
                 }
+                if (frameWidth > MAX_GIF_DIM || frameHeight > MAX_GIF_DIM || frameWidth * frameHeight > MAX_GIF_PIXELS) {
+                    throw new Error('Invalid GIF: frame dimensions too large');
+                }
+                const imgPacked = bytes[pos++];
+                let localPalette = null;
+                ({ palette: localPalette, pos } = readGifPalette(bytes, pos, imgPacked));
+                const framePalette = localPalette || palette;
                 if (!framePalette) {
                     throw new Error('Invalid GIF: no color table');
+                }
+                if (pos >= bytes.length) {
+                    throw new Error('Invalid GIF: missing LZW code size');
                 }
                 const interlace = (imgPacked & 0x40) !== 0;
                 const minCodeSize = bytes[pos++];
@@ -483,21 +509,25 @@
                     } else if (code === endCode) {
                         done = true;
                     } else if (prev === -1) {
-                        // First code after a clear: single dictionary entry.
+                        // First code after a clear: must already exist in the dictionary.
+                        if (code >= nextCode || !dict[code]) {
+                            throw new Error('Invalid GIF: bad LZW code');
+                        }
                         writeChain(code, -1);
                         prev = code;
                     } else {
                         if (code < nextCode) {
                             writeChain(code, -1);
-                            dict[nextCode] = { prefix: prev, suffix: dict[code].first, first: dict[prev].first };
-                        } else if (code === nextCode) {
+                            if (nextCode < 4096) {
+                                dict[nextCode++] = { prefix: prev, suffix: dict[code].first, first: dict[prev].first };
+                            }
+                        } else if (code === nextCode && nextCode < 4096) {
                             // KWI case: sequence of prev + its first byte.
                             writeChain(prev, dict[prev].first);
-                            dict[nextCode] = { prefix: prev, suffix: dict[prev].first, first: dict[prev].first };
+                            dict[nextCode++] = { prefix: prev, suffix: dict[prev].first, first: dict[prev].first };
                         } else {
                             throw new Error('Invalid GIF: bad LZW code');
                         }
-                        nextCode++;
                         if (nextCode === (1 << codeSize) && codeSize < 12) {
                             codeSize++;
                         }
@@ -721,41 +751,6 @@
         return out;
     }
 
-    async function resizeGifDataUrlToFit(dataUrl) {
-        const captured = await captureGifFrames(dataUrl, GIF_MAX_CAPTURE_DIM);
-        // Rough raw-byte budget a data URL of MAX_AVATAR_DATA_URL_LEN fits
-        // (base64 is 4/3 of raw). Indexed GIF frames run ~0.8 bytes/pixel
-        // after LZW for typical avatar content; skip dims whose total pixel
-        // data can't fit so we don't burn an encode pass on them.
-        const rawBudget = Math.floor((MAX_AVATAR_DATA_URL_LEN * 3) / 4);
-        const dims = [400, 320, 256, 200, 160, 128];
-        for (const dim of dims) {
-            if (dim > captured.width && dim > captured.height) continue;
-            const scale = Math.min(dim / captured.width, dim / captured.height, 1);
-            const width = Math.max(1, Math.round(captured.width * scale));
-            const height = Math.max(1, Math.round(captured.height * scale));
-            if (captured.frames.length * width * height * 0.8 > rawBudget) continue;
-            const frames = (width === captured.width && height === captured.height)
-                ? captured.frames
-                : await downscaleGifFrames(captured.frames, captured.width, captured.height, width, height);
-            const out = await encodeGifFrames(frames, width, height, captured.hasAlpha);
-            if (out.length <= MAX_AVATAR_DATA_URL_LEN) {
-                return { avatar: out, isGif: true };
-            }
-        }
-        // Practically unreachable fallback: first frame as a small JPEG.
-        const canvas = document.createElement('canvas');
-        canvas.width = captured.width;
-        canvas.height = captured.height;
-        const ctx = canvas.getContext('2d');
-        ctx.putImageData(new ImageData(captured.frames[0].data, captured.width, captured.height), 0, 0);
-        let jpeg = canvas.toDataURL('image/jpeg', 0.7);
-        if (jpeg.length > MAX_AVATAR_DATA_URL_LEN) {
-            jpeg = canvas.toDataURL('image/jpeg', 0.3);
-        }
-        return { avatar: jpeg, isGif: false };
-    }
-
     async function cropGifFrames(frames, srcW, srcH, cx, cy, cw, ch) {
         const src = document.createElement('canvas');
         src.width = srcW;
@@ -882,19 +877,6 @@
         };
     }
 
-    async function processGifAvatar(file) {
-        const dataUrl = await readFileAsDataUrl(file);
-        let avatar = dataUrl;
-        let isGif = true;
-        if (avatar.length > MAX_AVATAR_DATA_URL_LEN) {
-            const resized = await resizeGifDataUrlToFit(dataUrl);
-            avatar = resized.avatar;
-            isGif = resized.isGif;
-        }
-        const staticFrame = await extractGifFirstFrame(avatar);
-        return { avatar, staticFrame, isGif };
-    }
-
     async function fitStaticDataUrl(dataUrl) {
         if (dataUrl.length <= MAX_AVATAR_DATA_URL_LEN) return dataUrl;
         const img = await loadImage(dataUrl);
@@ -914,20 +896,8 @@
         return canvas.toDataURL('image/jpeg', 0.2);
     }
 
-    globalThis.processGifAvatar = processGifAvatar;
     globalThis.fitStaticDataUrl = fitStaticDataUrl;
     globalThis.createGifAnimator = createGifAnimator;
     globalThis.readAvatarFile = readFileAsDataUrl;
     globalThis.cropGifAvatar = cropGifDataUrl;
-    // Test hooks (used by the diagnostic page / node verification).
-    globalThis.__captureGifFramesWithDecoder = captureGifFramesWithDecoder;
-    globalThis.__decodeGifBytes = decodeGifBytes;
-    // Test hooks (used by the node-based verification script).
-    globalThis.__avatarTools = {
-        encodeGifFrames,
-        bytesToDataUrl,
-        hashAndCheckAlpha,
-        clampDelay,
-        MAX_AVATAR_DATA_URL_LEN,
-    };
 })();

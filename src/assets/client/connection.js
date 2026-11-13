@@ -158,7 +158,6 @@
                                     sendJoinMessage();
                                     break;
                                 case 'knock-denied':
-                                    knockDeniedFlag = true;
                                     hasLeftRoom = true;
                                     showKnockWaiting(true);
                                     break;
@@ -214,7 +213,6 @@
                                 case 'error':
                                     if (msg.data && msg.data.code === 'PASSWORD_REQUIRED') {
 
-                                        awaitingPassword = true;
                                         hasLeftRoom = true;
                                         isReconnecting = false;
                                         if (reconnectStatusTimeout) {
@@ -228,7 +226,6 @@
                                                 if (pass) {
                                                     roomCreationPassword = pass;
                                                     sessionStorage.setItem('rustrooms_room_password', pass);
-                                                    awaitingPassword = false;
                                                     hasLeftRoom = false;
                                                     reconnectionAttempts = 0;
                                                     isReconnecting = false;
@@ -272,11 +269,7 @@
                                                     // iOS) heals instead of reverting to Guest.
                                                     adoptServerProfile(user.status);
                                                 }
-                                                userAvatarCache[user.id] = {
-                                                    avatar: user.status.avatar,
-                                                    isGif: user.status.isGif,
-                                                    staticFrame: user.status.staticFrame
-                                                };
+                                                cachePeerAvatar(user.id, user.status);
                                                 if (user.status.isScreenSharing !== undefined) {
                                                     peerScreenStatus[user.id] = user.status.isScreenSharing;
                                                 }
@@ -309,16 +302,12 @@
                                         const joinedScreenAudio = getScreenAudioFlag(msg.data);
                                         updatePeerTrackHints(msg.userId, msg.data);
                                         if (msg.data) {
-                                            userAvatarCache[msg.userId] = {
-                                                avatar: msg.data.avatar,
-                                                isGif: msg.data.isGif,
-                                                staticFrame: msg.data.staticFrame
-                                            };
+                                            cachePeerAvatar(msg.userId, msg.data);
                                         }
-                                        if (msg.data.camEnabled !== undefined) {
+                                        if (msg.data?.camEnabled !== undefined) {
                                             peerCamStatus[msg.userId] = msg.data.camEnabled;
                                         }
-                                        if (msg.data.screenEnabled !== undefined) {
+                                        if (msg.data?.screenEnabled !== undefined) {
                                             peerScreenStatus[msg.userId] = msg.data.screenEnabled;
                                         }
 
@@ -410,11 +399,7 @@
                                      }
                                      if (!msg.data) break;
                                      updatePeerTrackHints(msg.userId, msg.data);
-                                     userAvatarCache[msg.userId] = {
-                                         avatar: msg.data.avatar,
-                                         isGif: msg.data.isGif,
-                                         staticFrame: msg.data.staticFrame
-                                     };
+                                     cachePeerAvatar(msg.userId, msg.data);
                                      updatePeerInfo(msg.userId, msg.data.nickname, msg.data.avatar, msg.data.isMuted, msg.data.isDeafened, msg.data.isGif, msg.data.staticFrame);
                                     break;
                                 case 'cam-toggle':
@@ -457,25 +442,21 @@
                                         const identifiedScreenAudio = getScreenAudioFlag(msg.data);
                                         updatePeerTrackHints(msg.userId, msg.data);
                                         if (msg.data) {
-                                            userAvatarCache[msg.userId] = {
-                                                avatar: msg.data.avatar,
-                                                isGif: msg.data.isGif,
-                                                staticFrame: msg.data.staticFrame
-                                            };
+                                            cachePeerAvatar(msg.userId, msg.data);
                                         }
-                                        if (msg.data.camEnabled !== undefined) {
+                                        if (msg.data?.camEnabled !== undefined) {
                                             peerCamStatus[msg.userId] = msg.data.camEnabled;
                                         }
-                                        if (msg.data.screenEnabled !== undefined) {
+                                        if (msg.data?.screenEnabled !== undefined) {
                                             peerScreenStatus[msg.userId] = msg.data.screenEnabled;
                                         }
                                         if (identifiedScreenAudio !== undefined) {
                                             peerScreenHasAudio[msg.userId] = identifiedScreenAudio;
                                         }
                                         if (peers[msg.userId]) {
-                                            updatePeerInfo(msg.userId, msg.data.nickname, msg.data.avatar, msg.data.isMuted, msg.data.isDeafened, msg.data.isGif, msg.data.staticFrame);
+                                            updatePeerInfo(msg.userId, msg.data?.nickname, msg.data?.avatar, msg.data?.isMuted, msg.data?.isDeafened, msg.data?.isGif, msg.data?.staticFrame);
                                         } else {
-                                            initPeer(msg.userId, false, msg.data.nickname, msg.data.avatar, msg.data.isMuted, msg.data.isDeafened, msg.data.isGif, msg.data.staticFrame);
+                                            initPeer(msg.userId, false, msg.data?.nickname, msg.data?.avatar, msg.data?.isMuted, msg.data?.isDeafened, msg.data?.isGif, msg.data?.staticFrame);
                                         }
                                         if (peerScreenStatus[msg.userId] === true && identifiedScreenAudio === true) {
                                             ensureScreenAudioUI(msg.userId);
@@ -665,17 +646,29 @@
             }, 300);
         }
 
+        function cachePeerAvatar(userId, payload) {
+            if (!userId || !payload) return;
+            const avatar = safeAvatarSrc(payload.avatar);
+            userAvatarCache[userId] = {
+                avatar,
+                isGif: !!(avatar && payload.isGif),
+                staticFrame: avatar ? safeAvatarSrc(payload.staticFrame) : null
+            };
+        }
+
         function setAvatar(layer, avatar, isGif, staticFrame) {
             layer.innerHTML = '';
-            if (avatar) {
-               const displaySrc = isGif && staticFrame ? staticFrame : avatar;
+            const safeAvatar = safeAvatarSrc(avatar);
+            const safeStaticFrame = safeAvatar ? safeAvatarSrc(staticFrame) : null;
+            if (safeAvatar) {
+               const displaySrc = isGif && safeStaticFrame ? safeStaticFrame : safeAvatar;
                const bgImg = document.createElement('img');
                bgImg.src = displaySrc;
                bgImg.className = 'avatar-img';
                bgImg.draggable = false;
-               if (isGif && staticFrame) {
-                   bgImg.dataset.gifSrc = avatar;
-                   bgImg.dataset.staticSrc = staticFrame;
+               if (isGif && safeStaticFrame) {
+                   bgImg.dataset.gifSrc = safeAvatar;
+                   bgImg.dataset.staticSrc = safeStaticFrame;
                }
 
                const centerDiv = document.createElement('div');
@@ -684,9 +677,9 @@
                const centerImg = document.createElement('img');
                centerImg.src = displaySrc;
                centerImg.draggable = false;
-               if (isGif && staticFrame) {
-                   centerImg.dataset.gifSrc = avatar;
-                   centerImg.dataset.staticSrc = staticFrame;
+               if (isGif && safeStaticFrame) {
+                   centerImg.dataset.gifSrc = safeAvatar;
+                   centerImg.dataset.staticSrc = safeStaticFrame;
                }
 
                centerDiv.appendChild(centerImg);
@@ -1322,19 +1315,7 @@
             volControls.id = `vol-controls-${userId}`;
             volControls.className = 'volume-controls z-30';
 
-            const mainVolRow = document.createElement('div');
-            mainVolRow.className = 'vol-row';
-            mainVolRow.id = `vol-row-main-${userId}`;
-            mainVolRow.innerHTML = `
-                <button class="text-white hover:text-blue-400" onclick="toggleMute('${userId}', 'main')" id="mute-main-${userId}">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${savedVol === 0 ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>' : '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>'}</svg>
-                </button>
-                <input type="range" min="0" max="1" step="0.05" value="${savedVol}" oninput="setVolume('${userId}', 'main', this.value)">
-            `;
-            if (savedVol === 0) {
-                const btn = mainVolRow.querySelector("button");
-                if (btn) btn.classList.add("text-red-500");
-            }
+            const mainVolRow = createVolumeRow(userId, 'main', savedVol);
             volControls.appendChild(mainVolRow);
 
             const fsBtn = document.createElement('button');
@@ -1490,7 +1471,7 @@
                     const isHintedScreenTrack = !!hintedScreenTrackId && event.track.id === hintedScreenTrackId;
                     const isHintedMicTrack = !!hintedMicTrackId && event.track.id === hintedMicTrackId;
 
-                    if (isHintedScreenTrack && !isHintedMicTrack) {
+                    const attachPeerScreenAudioTrack = (track) => {
                         peerScreenHasAudio[userId] = true;
                         const savedScreenVol = getVolumeSettings(userId, 'screen');
 
@@ -1504,31 +1485,21 @@
                             container.appendChild(screenAud);
                         }
 
-                        const screenStream = new MediaStream([event.track]);
-                        screenAud.srcObject = screenStream;
+                        screenAud.srcObject = new MediaStream([track]);
                         if (isDeafened) screenAud.muted = true;
 
-                        if (!document.getElementById(`vol-row-screen-${userId}`)) {
-                            const row = document.createElement('div');
-                            row.className = 'vol-row';
-                            row.id = `vol-row-screen-${userId}`;
-                            row.innerHTML = `
-                                <div class="flex items-center gap-2">
-                                    <button class="text-white hover:text-blue-400" onclick="toggleMute('${userId}', 'screen')" id="mute-screen-${userId}">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="14" rx="2" ry="2"></rect><line x1="12" y1="22" x2="12" y2="16"></line><path d="M5 12h14"></path><path d="M12 12v4"></path></svg>
-                                    </button>
-                                    <input type="range" min="0" max="1" step="0.05" value="${savedScreenVol}" oninput="setVolume('${userId}', 'screen', this.value)">
-                                </div>
-                            `;
-                            volControls.appendChild(row);
-                        }
+                        ensureScreenAudioUI(userId, volControls);
 
-                        event.track.onended = () => {
+                        track.onended = () => {
                             const row = document.getElementById(`vol-row-screen-${userId}`);
                             if (row) row.remove();
                             const aud = document.getElementById(`aud-screen-${userId}`);
                             if (aud) aud.remove();
                         };
+                    };
+
+                    if (isHintedScreenTrack && !isHintedMicTrack) {
+                        attachPeerScreenAudioTrack(event.track);
                         return;
                     }
 
@@ -1539,45 +1510,7 @@
                         (async () => { await setupAudioMonitor(mainStream, `wrapper-${userId}`); })();
 
                     } else {
-
-                        peerScreenHasAudio[userId] = true;
-
-                        const savedScreenVol = getVolumeSettings(userId, 'screen');
-
-                        let screenAud = document.getElementById(`aud-screen-${userId}`);
-                        if (!screenAud) {
-                            screenAud = document.createElement('audio');
-                            screenAud.id = `aud-screen-${userId}`;
-                            screenAud.autoplay = true;
-                            attachSinkId(screenAud, currentAudioOutputId);
-                            screenAud.volume = savedScreenVol;
-                            container.appendChild(screenAud);
-                        }
-
-                        const screenStream = new MediaStream([event.track]);
-                        screenAud.srcObject = screenStream;
-                        if (isDeafened) screenAud.muted = true;
-
-                        if (!document.getElementById(`vol-row-screen-${userId}`)) {
-                            const row = document.createElement('div');
-                            row.className = 'vol-row';
-                            row.id = `vol-row-screen-${userId}`;
-                            row.innerHTML = `
-                                <div class="flex items-center gap-2">
-                                    <button class="text-white hover:text-blue-400" onclick="toggleMute('${userId}', 'screen')" id="mute-screen-${userId}">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="14" rx="2" ry="2"></rect><line x1="12" y1="22" x2="12" y2="16"></line><path d="M5 12h14"></path><path d="M12 12v4"></path></svg>
-                                    </button>
-                                    <input type="range" min="0" max="1" step="0.05" value="${savedScreenVol}" oninput="setVolume('${userId}', 'screen', this.value)">
-                                </div>
-                            `;
-                            volControls.appendChild(row);
-                        }
-
-                        event.track.onended = () => {
-                            screenAud.remove();
-                            const row = document.getElementById(`vol-row-screen-${userId}`);
-                            if (row) row.remove();
-                        };
+                        attachPeerScreenAudioTrack(event.track);
                     }
                 }
 
@@ -1802,7 +1735,8 @@
             const volRow = document.getElementById(`vol-row-screen-${userId}`);
             if (volRow) volRow.remove();
 
-            const sidebarAvatar = document.querySelector(`.room-user-row[data-user-id="${userId}"] .mini-avatar`);
+            const safeSelectorUid = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(userId) : userId;
+            const sidebarAvatar = document.querySelector(`.room-user-row[data-user-id="${safeSelectorUid}"] .mini-avatar`);
             if (sidebarAvatar) sidebarAvatar.classList.remove('speaking-glow');
 
             delete peerMicTrackId[userId];
@@ -1993,6 +1927,12 @@
             pendingKnocks = [];
             renderKnocks();
 
+            stopHeartbeat();
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            if (iosSlowRetryTimer) { clearTimeout(iosSlowRetryTimer); iosSlowRetryTimer = null; }
+            if (desktopSlowRetryTimer) { clearTimeout(desktopSlowRetryTimer); desktopSlowRetryTimer = null; }
+            if (reconnectStatusTimeout) { clearTimeout(reconnectStatusTimeout); reconnectStatusTimeout = null; }
+
             if (ws) {
                 ws.onclose = null;
                 ws.onerror = null;
@@ -2000,11 +1940,12 @@
                 ws = null;
             }
 
-            if (audioContext && audioContext.state !== 'closed') {
+            const ctxToClose = audioContext;
+            audioContext = null;
+            if (ctxToClose && ctxToClose.state !== 'closed') {
                 setTimeout(() => {
-                    if (audioContext && audioContext.state !== 'closed') {
-                        audioContext.close().catch(e => console.error('Error closing audio context:', e));
-                        audioContext = null;
+                    if (ctxToClose.state !== 'closed') {
+                        ctxToClose.close().catch(e => console.error('Error closing audio context:', e));
                     }
                 }, 800);
             }
@@ -2021,6 +1962,16 @@
             if (overlay) overlay.classList.remove('open');
             document.body.classList.remove('sidebar-open');
 
+            isDeafened = false;
+            myForceFlags = { muted: false, deafened: false, camOff: false, shareOff: false };
+            roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, kind: 'regular', speakers: [], audience: [], forced: {} };
+            const btnDeafen = document.getElementById('btnDeafen');
+            if (btnDeafen) {
+                btnDeafen.classList.remove('active-red');
+                delete btnDeafen.dataset.micWasEnabled;
+                btnDeafen.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>`;
+            }
+            if (typeof applyControlLocks === 'function') applyControlLocks();
             if (typeof updateStageBadge === 'function') updateStageBadge();
             if (typeof updateLobbyBadge === 'function') updateLobbyBadge();
 
@@ -2034,26 +1985,14 @@
             }
 
             sessionStorage.setItem('rustrooms_welcomed', 'false');
-            sessionStorage.setItem('rustrooms_setup_done', 'false');
-            sessionStorage.removeItem('rustrooms_last_room_id');
-            sessionStorage.removeItem('rustrooms_last_channel_id');
 
             roomId = '';
             channelId = '';
-            if (window.location.pathname !== '/') {
-                history.pushState(null, "", "/");
-            }
 
             const inviteOverlay = document.getElementById('inviteWelcomeOverlay');
-
-            if (roomId) {
-                updateInviteOverlay();
-                hideWelcome();
-            } else {
-                showWelcome();
-                if (inviteOverlay) {
-                    inviteOverlay.classList.add('hidden', 'opacity-0');
-                }
+            showWelcome();
+            if (inviteOverlay) {
+                inviteOverlay.classList.add('hidden', 'opacity-0');
             }
             if (appLayout) {
                 appLayout.classList.add('hidden');
@@ -2649,7 +2588,7 @@
             }
 
             if (!screenStream) {
-                if (myForceFlags && myForceFlags.screenOff) return;
+                if (myForceFlags && myForceFlags.shareOff) return;
                 if (typeof roomAdminState !== 'undefined' && roomAdminState && roomAdminState.kind === 'stage' && typeof canSpeakId === 'function' && !canSpeakId(persistentUserId)) return;
             }
 
@@ -2734,6 +2673,7 @@
                     });
                     if (isUnloading) {
                         screenStream.getTracks().forEach(t => t.stop());
+                        screenStream = null;
                         return;
                     }
                     const screenTrack = screenStream.getVideoTracks()[0];

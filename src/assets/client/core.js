@@ -124,7 +124,6 @@
         const maxReconnectionDelay = isIOS ? 15000 : 30000;
         let hasLeftRoom = true;
         let isReconnecting = false;
-        let awaitingPassword = false;
         let desktopSlowRetryCount = 0;
         let desktopSlowRetryTimer = null;
 
@@ -537,6 +536,13 @@
                 peers = {};
             }
 
+            // Stop any active audio level monitors before tearing down AudioContext
+            if (typeof audioMonitorNodes !== 'undefined' && audioMonitorNodes) {
+                Object.keys(audioMonitorNodes).forEach(targetId => {
+                    try { cleanupAudioMonitor(targetId); } catch(e) {}
+                });
+            }
+
             // Close audio context
             if (audioContext) {
                 try {
@@ -653,28 +659,61 @@
             }
         }
 
-        function ensureScreenAudioUI(userId) {
+        function createVolumeRow(userId, type, initialVol) {
+            const row = document.createElement('div');
+            row.className = 'vol-row';
+            row.id = `vol-row-${type}-${userId}`;
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'text-white hover:text-blue-400';
+            btn.id = `mute-${type}-${userId}`;
+            btn.addEventListener('click', () => toggleMute(userId, type));
+
+            if (type === 'screen') {
+                btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="14" rx="2" ry="2"></rect><line x1="12" y1="22" x2="12" y2="16"></line><path d="M5 12h14"></path><path d="M12 12v4"></path></svg>';
+            } else {
+                btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${initialVol === 0 ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>' : '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>'}</svg>`;
+            }
+            if (initialVol === 0) {
+                btn.classList.add('text-red-500');
+            }
+
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.min = '0';
+            slider.max = '1';
+            slider.step = '0.05';
+            slider.value = String(initialVol);
+            slider.addEventListener('input', () => setVolume(userId, type, slider.value));
+
+            if (type === 'screen') {
+                const wrap = document.createElement('div');
+                wrap.className = 'flex items-center gap-2';
+                wrap.appendChild(btn);
+                wrap.appendChild(slider);
+                row.appendChild(wrap);
+            } else {
+                row.appendChild(btn);
+                row.appendChild(slider);
+            }
+            return row;
+        }
+
+        function ensureScreenAudioUI(userId, targetVolControls = null) {
             if (!peerScreenHasAudio[userId]) return;
 
-            const vid = document.getElementById(`vid-${userId}`);
-            const volControls = document.getElementById(`vol-controls-${userId}`);
-            if (!vid || !vid.srcObject || !volControls) return;
+            let volControls = targetVolControls;
+            if (!volControls) {
+                const vid = document.getElementById(`vid-${userId}`);
+                volControls = document.getElementById(`vol-controls-${userId}`);
+                if (!vid || !vid.srcObject || !volControls) return;
+            }
 
             if (document.getElementById(`vol-row-screen-${userId}`)) return;
 
             const savedScreenVol = getVolumeSettings(userId, 'screen');
-            const row = document.createElement('div');
-            row.className = 'vol-row';
-            row.id = `vol-row-screen-${userId}`;
-            row.innerHTML = `
-                <div class="flex items-center gap-2">
-                    <button class="text-white hover:text-blue-400" onclick="toggleMute('${userId}', 'screen')" id="mute-screen-${userId}">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="14" rx="2" ry="2"></rect><line x1="12" y1="22" x2="12" y2="16"></line><path d="M5 12h14"></path><path d="M12 12v4"></path></svg>
-                    </button>
-                    <input type="range" min="0" max="1" step="0.05" value="${savedScreenVol}" oninput="setVolume('${userId}', 'screen', this.value)">
-                </div>
-            `;
-            volControls.appendChild(row);
+            volControls.appendChild(createVolumeRow(userId, 'screen', savedScreenVol));
         }
 
         const turnUrl = {{TURN_URL}};
@@ -967,6 +1006,15 @@
         function escapeHtml(str) {
             if (!str) return '';
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function isSafeAvatarUrl(url) {
+            if (typeof url !== 'string' || !url) return false;
+            return /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=_-]+$/i.test(url);
+        }
+
+        function safeAvatarSrc(url) {
+            return isSafeAvatarUrl(url) ? url : null;
         }
 
         function sendPing() {
@@ -1341,6 +1389,8 @@
             })();
         }
 
+        let deviceListEpoch = 0;
+
         async function populateDeviceList() {
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
@@ -1356,6 +1406,8 @@
                 audioSelect.innerHTML = '';
                 audioOutputSelect.innerHTML = '';
                 videoSelect.innerHTML = '';
+                delete videoSelect.dataset.loading;
+                deviceListEpoch++;
 
                 const kindCounts = {};
                 devices.forEach(device => {
@@ -1825,8 +1877,8 @@
                         if (document.getElementById('settingsNicknameInput')) document.getElementById('settingsNicknameInput').value = userNickname;
                     }
                     if (data.avatar) {
-                        fallbackAvatar = data.avatar;
-                        fallbackIsGif = !!data.isGif;
+                        fallbackAvatar = safeAvatarSrc(data.avatar);
+                        fallbackIsGif = !!(fallbackAvatar && data.isGif);
                     }
                     if (data.audioOutputId) {
                         currentAudioOutputId = data.audioOutputId;
@@ -1853,10 +1905,10 @@
             }
             try {
                 const dbData = await loadAvatarFromDB();
-                if (dbData && dbData.avatar) {
+                if (dbData && isSafeAvatarUrl(dbData.avatar)) {
                     userAvatar = dbData.avatar;
                     userAvatarIsGif = !!dbData.isGif;
-                    userAvatarStaticFrame = dbData.staticFrame || null;
+                    userAvatarStaticFrame = safeAvatarSrc(dbData.staticFrame);
                 } else if (fallbackAvatar) {
                     userAvatar = fallbackAvatar;
                     userAvatarIsGif = fallbackIsGif;
@@ -1990,9 +2042,9 @@
                 if (sNick && activeEl !== sNick) sNick.value = userNickname;
             }
             if (status.avatar !== undefined) {
-                userAvatar = status.avatar || null;
-                userAvatarIsGif = !!status.isGif;
-                userAvatarStaticFrame = status.staticFrame || null;
+                userAvatar = safeAvatarSrc(status.avatar);
+                userAvatarIsGif = !!(userAvatar && status.isGif);
+                userAvatarStaticFrame = userAvatar ? safeAvatarSrc(status.staticFrame) : null;
                 if (userAvatar) {
                     userAvatarCache[persistentUserId] = {
                         avatar: userAvatar,
@@ -2124,14 +2176,19 @@
         }
 
         function resizeImageForAvatar(file) {
-            return new Promise((resolve) => {
+            return new Promise((resolve, reject) => {
                 const reader = new FileReader();
+                reader.onerror = () => reject(reader.error || new Error('Failed to read image file'));
                 reader.onload = function(e) {
                     const img = new Image();
                     img.onload = function() {
                         const MAX_DIM = 1200;
                         let w = img.naturalWidth;
                         let h = img.naturalHeight;
+                        if (!w || !h) {
+                            reject(new Error('Invalid image dimensions'));
+                            return;
+                        }
                         if (w > MAX_DIM || h > MAX_DIM) {
                             if (w > h) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
                             else { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
@@ -2140,10 +2197,18 @@
                         canvas.width = w;
                         canvas.height = h;
                         const ctx = canvas.getContext('2d');
+                        if (!ctx) {
+                            if (isSafeAvatarUrl(e.target.result)) resolve(e.target.result);
+                            else reject(new Error('Canvas context unavailable'));
+                            return;
+                        }
                         ctx.drawImage(img, 0, 0, w, h);
                         resolve(canvas.toDataURL('image/jpeg', 0.8));
                     };
-                    img.onerror = function() { resolve(e.target.result); };
+                    img.onerror = function() {
+                        if (isSafeAvatarUrl(e.target.result)) resolve(e.target.result);
+                        else reject(new Error('Unsupported or corrupt image file'));
+                    };
                     img.src = e.target.result;
                 };
                 reader.readAsDataURL(file);
@@ -2193,6 +2258,10 @@
                 resizeImageForAvatar(file).then(dataUrl => {
                     hideProcessing();
                     openCropModal(dataUrl, 'setup');
+                }).catch(err => {
+                    console.error("Avatar resize failed:", err);
+                    hideProcessing();
+                    showCustomAlert("Image Error", "Could not process this image. Please try a different file.");
                 });
             }
             input.value = '';
@@ -2516,9 +2585,10 @@
 
             savePreferences();
 
+            const startDeviceEpoch = deviceListEpoch;
             const originalVideoSelectContent = videoSelectEl ? videoSelectEl.innerHTML : null;
-            const originalAudioSelectContent = audioSelectEl ? audioSelectEl.innerHTML : null;
             if (videoSelectEl) {
+                videoSelectEl.dataset.loading = '1';
                 videoSelectEl.innerHTML = '<option value="">Loading...</option>';
                 videoSelectEl.disabled = true;
             }
@@ -2745,15 +2815,17 @@
                     btnPreviewMic.classList.remove('opacity-50', 'cursor-not-allowed');
                 }
 
-                if (videoSelectEl && originalVideoSelectContent) {
-                    videoSelectEl.innerHTML = originalVideoSelectContent;
+                if (videoSelectEl) {
+                    if (videoSelectEl.dataset.loading === '1' && startDeviceEpoch === deviceListEpoch && originalVideoSelectContent) {
+                        videoSelectEl.innerHTML = originalVideoSelectContent;
+                    }
+                    delete videoSelectEl.dataset.loading;
                     if (savedVideoValue && [...videoSelectEl.options].some(o => o.value === savedVideoValue)) {
                         videoSelectEl.value = savedVideoValue;
                     }
                     videoSelectEl.disabled = false;
                 }
-                if (audioSelectEl && originalAudioSelectContent) {
-                    audioSelectEl.innerHTML = originalAudioSelectContent;
+                if (audioSelectEl) {
                     if (savedAudioValue && [...audioSelectEl.options].some(o => o.value === savedAudioValue)) {
                         audioSelectEl.value = savedAudioValue;
                     }
@@ -3388,7 +3460,6 @@
         let myForceFlags = { muted: false, deafened: false, camOff: false, shareOff: false };
         let pendingKnocks = [];
         let createRoomTypeChoice = 'regular';
-        let knockDeniedFlag = false;
 
         function getStoredResumeToken() {
             try { return sessionStorage.getItem('rustrooms_resume_' + roomId) || null; } catch (e) { return null; }
@@ -3623,9 +3694,23 @@
             }
             panel.style.display = '';
             if (count) count.textContent = pendingKnocks.length;
+            if (!list.dataset.knockDelegated) {
+                list.dataset.knockDelegated = '1';
+                list.addEventListener('click', (e) => {
+                    const btn = e.target.closest('button[data-knock-action]');
+                    if (!btn) return;
+                    const uid = btn.dataset.knockId;
+                    const action = btn.dataset.knockAction;
+                    if (!uid) return;
+                    if (action === 'approve') respondKnock(uid, true);
+                    else if (action === 'deny') respondKnock(uid, false);
+                    else if (action === 'block') respondKnockBlock(uid);
+                });
+            }
             list.innerHTML = pendingKnocks.map(k => {
                 const name = k.nickname || 'Guest';
                 const meta = k.channel ? `wants to join #${k.channel}` : '';
+                const safeId = escapeHtml(k.id);
                 return `
                 <div class="knock-row">
                     <div class="knock-who">
@@ -3633,9 +3718,9 @@
                         ${k.channel ? `<span class="knock-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>` : ''}
                     </div>
                     <div class="knock-actions">
-                        <button class="knock-btn approve" onclick="respondKnock('${k.id}', true)">Let in</button>
-                        <button class="knock-btn deny" onclick="respondKnock('${k.id}', false)">Deny</button>
-                        <button class="knock-btn block" onclick="respondKnockBlock('${k.id}')">Block</button>
+                        <button type="button" class="knock-btn approve" data-knock-action="approve" data-knock-id="${safeId}">Let in</button>
+                        <button type="button" class="knock-btn deny" data-knock-action="deny" data-knock-id="${safeId}">Deny</button>
+                        <button type="button" class="knock-btn block" data-knock-action="block" data-knock-id="${safeId}">Block</button>
                     </div>
                 </div>`; }).join('');
         }
@@ -3688,7 +3773,6 @@
             }
         }
         function cancelKnock() {
-            knockDeniedFlag = true;
             hasLeftRoom = true;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 try { ws.send(JSON.stringify({ type: 'knock-cancel' })); } catch (e) {}

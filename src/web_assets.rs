@@ -229,8 +229,10 @@ pub(crate) async fn app_js() -> impl IntoResponse {
 
 /// Render the single-page app shell with a dynamic `<title>` and social
 /// meta tags (Open Graph / Twitter Card) injected into the head.
+/// `meta_tags` must already be HTML-escaped by the caller.
 pub(crate) fn render_html_page(page_title: &str, meta_tags: &str) -> String {
+    let escaped_title = crate::routes::escape_html(page_title);
     include_str!("assets/index.html")
-        .replace("{{PAGE_TITLE}}", page_title)
+        .replace("{{PAGE_TITLE}}", &escaped_title)
         .replace("{{META_TAGS}}", meta_tags)
 }

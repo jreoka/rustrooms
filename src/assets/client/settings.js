@@ -119,6 +119,10 @@
                 resizeImageForAvatar(file).then(dataUrl => {
                     hideProcessing();
                     openCropModal(dataUrl, 'settings');
+                }).catch(err => {
+                    console.error("Settings avatar resize failed:", err);
+                    hideProcessing();
+                    showCustomAlert("Image Error", "Could not process this image. Please try a different file.");
                 });
             }
             input.value = '';
@@ -634,19 +638,25 @@
                 applyGifCrop();
                 return;
             }
+            setCropProcessing(true);
             currentCroppie.result({
                 type: 'base64',
                 size: { width: 400, height: 400 },
                 format: 'jpeg',
                 quality: 0.8
             }).then(function(base64) {
-                return fitStaticDataUrl(base64).then(function(fitBase64) {
-                    commitCropResult({
-                        avatar: fitBase64,
-                        isGif: false,
-                        staticFrame: null
-                    });
-                    closeCropModal();
+                return fitStaticDataUrl(base64);
+            }).then(function(fitBase64) {
+                setCropProcessing(false);
+                commitCropResult({
+                    avatar: fitBase64,
+                    isGif: false,
+                    staticFrame: null
                 });
+                closeCropModal();
+            }).catch(function(err) {
+                console.error("Image crop failed:", err);
+                setCropProcessing(false);
+                showCustomAlert("Image Error", "Could not process this image. Please try a different file.");
             });
         }

@@ -77,7 +77,7 @@ pub(crate) const MAX_STATIC_FRAME_DATA_LEN: usize = 512 * 1024;
 pub(crate) const CLIENT_WS_MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 // Distributed join messages contain the profile in both status and signaling data.
 pub(crate) const DISTRIBUTED_MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
-pub(crate) const OUTBOUND_QUEUE_CAPACITY: usize = 32;
+pub(crate) const OUTBOUND_QUEUE_CAPACITY: usize = 128;
 pub(crate) const DISTRIBUTED_BROADCAST_CAPACITY: usize = 256;
 // Peer heartbeats expire hard-crashed nodes so they do not leave ghost users.
 pub(crate) const DISTRIBUTED_HEARTBEAT_SECS: u64 = 5;
@@ -474,6 +474,31 @@ pub(crate) fn reconcile_join_status(
     }
 }
 
+/// Returns whether `value` is a safe base64-encoded raster image data URL for avatars.
+/// Rejects remote HTTP(S) URLs (which leak client IPs) and SVG payloads.
+pub(crate) fn is_safe_avatar_data_url(value: &str) -> bool {
+    if value.len() > MAX_AVATAR_DATA_LEN {
+        return false;
+    }
+    let Some((prefix, payload)) = value.split_once(',') else {
+        return false;
+    };
+    let is_supported_prefix = [
+        "data:image/png;base64",
+        "data:image/jpeg;base64",
+        "data:image/jpg;base64",
+        "data:image/gif;base64",
+        "data:image/webp;base64",
+    ]
+    .iter()
+    .any(|allowed| prefix.eq_ignore_ascii_case(allowed));
+    is_supported_prefix
+        && !payload.is_empty()
+        && payload
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_'))
+}
+
 pub(crate) fn normalize_configured_host(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -647,5 +672,17 @@ mod tests {
         assert_eq!(normalize_nickname("   "), "Guest");
         let long = "a".repeat(MAX_NICKNAME_LEN + 10);
         assert_eq!(normalize_nickname(&long).chars().count(), MAX_NICKNAME_LEN);
+    }
+
+    #[test]
+    fn safe_avatar_data_url_accepts_raster_and_rejects_remote_or_svg() {
+        assert!(is_safe_avatar_data_url("data:image/png;base64,iVBORw0KGgo="));
+        assert!(is_safe_avatar_data_url("DATA:IMAGE/GIF;BASE64,R0lGODlh"));
+        assert!(is_safe_avatar_data_url("data:image/webp;base64,UklGRh4="));
+        assert!(!is_safe_avatar_data_url("https://example.com/pixel.png"));
+        assert!(!is_safe_avatar_data_url("javascript:alert(1)"));
+        assert!(!is_safe_avatar_data_url("data:image/svg+xml;base64,PHN2Zz4="));
+        assert!(!is_safe_avatar_data_url("data:image/png;base64,bad\"quote"));
+        assert!(!is_safe_avatar_data_url("data:image/png;base64,"));
     }
 }

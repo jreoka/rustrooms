@@ -1,6 +1,6 @@
 use crate::distributed::distributed_broadcast;
 use crate::state::{
-    AppState, DistributedMessage, PersistedState, ResumeRecord, RoomAdmin, SignalMessage,
+    AppState, DistributedMessage, PersistedState, ResumeRecord, RoomAdmin, SignalMessage, UserTx,
     current_unix_secs,
 };
 use axum::extract::ws::Message;
@@ -232,6 +232,28 @@ pub(crate) async fn send_knock_update(state: &AppState, room_id: &str) {
     .await;
 }
 
+/// Drain parked lobby knockers when lobby mode turns off, moving them to `approved`.
+pub(crate) fn drain_pending_knocks(admin_state: &mut RoomAdmin) -> Vec<UserTx> {
+    let mut approved_ptxs = Vec::with_capacity(admin_state.pending.len());
+    for (target_uid, pending) in admin_state.pending.drain() {
+        admin_state.approved.insert(target_uid);
+        approved_ptxs.push(pending.tx);
+    }
+    admin_state.remote_pending.clear();
+    approved_ptxs
+}
+
+/// Notify drained lobby knockers that they may now complete their join.
+pub(crate) fn notify_approved_knocks(approved_ptxs: Vec<UserTx>) {
+    if approved_ptxs.is_empty() {
+        return;
+    }
+    let msg = signal_text("knock-approved", None, None);
+    for ptx in approved_ptxs {
+        let _ = ptx.try_send(Ok(Message::Text(msg.clone().into())));
+    }
+}
+
 // ---- Persistence (restarts / rollouts keep admin state) ----
 
 pub(crate) fn state_file_path() -> PathBuf {
@@ -291,14 +313,31 @@ pub(crate) async fn persist_state(state: &AppState) {
         return;
     };
     let path = state_file_path();
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(err) = tokio::fs::create_dir_all(parent).await
+    {
+        eprintln!(
+            "Failed to create state directory {}: {err}",
+            parent.display()
+        );
+        return;
+    }
     let tmp = path.with_extension("json.tmp");
-    if tokio::fs::write(&tmp, json).await.is_ok() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).await;
-        }
-        let _ = tokio::fs::rename(&tmp, &path).await;
+    if let Err(err) = tokio::fs::write(&tmp, json).await {
+        eprintln!("Failed to write state temp file {}: {err}", tmp.display());
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).await;
+    }
+    if let Err(err) = tokio::fs::rename(&tmp, &path).await {
+        eprintln!(
+            "Failed to atomically replace state file {}: {err}",
+            path.display()
+        );
     }
 }
 
@@ -312,7 +351,7 @@ pub(crate) async fn persist_state(state: &AppState) {
 // carries an HMAC signature under the shared server secret so another
 // node in a P2P cluster can verify it without a central database.
 
-pub(crate) const RESUME_TOKEN_TTL_SECS: u64 = 300;
+pub(crate) const RESUME_TOKEN_TTL_SECS: u64 = 7200;
 const REVOKED_TOKEN_HASH: &str = "revoked";
 
 pub(crate) fn resume_grace_secs() -> u64 {
@@ -507,6 +546,16 @@ pub(crate) async fn validate_room_resume_token(
         let remote = state.remote_users.lock().await;
         if let Some(room) = remote.get(room_id) {
             for ch in room.keys() {
+                if !candidate_channels.contains(ch) {
+                    candidate_channels.push(ch.clone());
+                }
+            }
+        }
+    }
+    {
+        let times = state.channel_creation_times.lock().await;
+        if let Some(channels) = times.get(room_id) {
+            for ch in channels.keys() {
                 if !candidate_channels.contains(ch) {
                     candidate_channels.push(ch.clone());
                 }
