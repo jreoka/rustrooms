@@ -66,8 +66,6 @@
                                     profileRev: profileRev,
                                     adminKey: getStoredAdminKey(),
                                     resumeToken: getStoredResumeToken(),
-                                    lobby: !!(getCreateOpts() && getCreateOpts().lobby),
-                                    roomType: (getCreateOpts() && getCreateOpts().type) || 'regular',
                                     avatar: userAvatar,
                                     isGif: userAvatarIsGif,
                                     staticFrame: userAvatarStaticFrame,
@@ -138,7 +136,6 @@
                                     }
                                     lastJoinWasResumed = !!(msg.data && msg.data.resumed);
                                     hideKnockWaiting();
-                                    try { sessionStorage.removeItem('rustrooms_create_opts'); } catch (e) {}
                                     break;
                                 case 'admin-key':
                                     if (msg.data && msg.data.key) storeAdminKey(msg.data.key);
@@ -240,11 +237,6 @@
                                         hasLeftRoom = true;
                                         showCustomAlert("Banned", "You are banned from this room.", () => {
                                             window.location.href = "/";
-                                        });
-                                    } else if (msg.data && msg.data.code === 'STAGE_CHANNEL_ADMIN_ONLY') {
-                                        hasLeftRoom = true;
-                                        showCustomAlert("Stage room", msg.data.message || "Only admins can create channels in a stage room.", () => {
-                                            window.location.href = "/" + encodeURIComponent(roomId);
                                         });
                                     } else if (msg.data && ['NOT_ADMIN', 'CANNOT_DEMOTE_CREATOR', 'CANNOT_BAN', 'MUST_DEMOTE_FIRST', 'KICK_SELF'].includes(msg.data.code)) {
                                         showModNotice(msg.data.message || "That action isn't allowed.");
@@ -1027,52 +1019,15 @@
             }
         }
 
-        // In a stage room the main area is the stage: only participants
-        // holding a stage seat get a tile. Audience members stay in the
-        // sidebar lists and never appear here.
-        function stageTileHidden(userId) {
-            return roomAdminState.kind === 'stage' && !canSpeakId(userId);
-        }
-
-        function visibleTileCount() {
-            if (!remoteGrid) return 0;
-            let n = 0;
-            remoteGrid.querySelectorAll('.video-container').forEach(el => {
-                if (el.style.display !== 'none') n++;
-            });
-            return n;
-        }
-
-        function reconcileStageTiles() {
-            if (!remoteGrid) return;
-            remoteGrid.querySelectorAll('.video-container').forEach(el => {
-                const uid = el.dataset.userId;
-                if (uid) el.style.display = stageTileHidden(uid) ? 'none' : '';
-            });
-            checkEmpty();
-        }
-
         function checkEmpty() {
             const count = Object.keys(peers).length;
-            const visible = visibleTileCount();
-            if (visible === 0) {
+            if (count === 0) {
                 emptyState.style.display = 'block';
                 const title = document.getElementById('emptyStateTitle');
                 const sub = document.getElementById('emptyStateSub');
                 if (title && sub) {
-                    if (roomAdminState.kind === 'stage' && canSpeakId(persistentUserId)) {
-                        // The stage only looks empty because the local user
-                        // is the one on it (self-view is the PiP, never a
-                        // grid tile) — don't claim the stage is empty.
-                        title.innerText = "You're on stage";
-                        sub.innerText = "You're the only one up here — listeners can see and hear you.";
-                    } else if (roomAdminState.kind === 'stage' && count > 0) {
-                        title.innerText = 'Nobody is on the stage right now';
-                        sub.innerText = 'Listeners can see and hear whoever is on stage.';
-                    } else {
-                        title.innerText = 'Waiting for others to join...';
-                        sub.innerText = 'Share the invite link to get started.';
-                    }
+                    title.innerText = 'Waiting for others to join...';
+                    sub.innerText = 'Share the invite link to get started.';
                 }
             } else {
                 emptyState.style.display = 'none';
@@ -1080,7 +1035,7 @@
             if (count > 0) {
                 loadTileOrder();
             }
-            updateGridLayout(visible);
+            updateGridLayout(count);
         }
 
         function updateGridLayout(count) {
@@ -1338,7 +1293,6 @@
             container._fullscreenChangeHandler = onFullscreenChange;
 
             container.dataset.userId = userId;
-            if (stageTileHidden(userId)) container.style.display = 'none';
 
             setupSmoothDragAndDrop(container);
 
@@ -1964,7 +1918,7 @@
 
             isDeafened = false;
             myForceFlags = { muted: false, deafened: false, camOff: false, shareOff: false };
-            roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, kind: 'regular', speakers: [], audience: [], forced: {} };
+            roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, forced: {} };
             const btnDeafen = document.getElementById('btnDeafen');
             if (btnDeafen) {
                 btnDeafen.classList.remove('active-red');
@@ -1972,7 +1926,6 @@
                 btnDeafen.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>`;
             }
             if (typeof applyControlLocks === 'function') applyControlLocks();
-            if (typeof updateStageBadge === 'function') updateStageBadge();
             if (typeof updateLobbyBadge === 'function') updateLobbyBadge();
 
             const isMobileSlideOver = typeof isMobileSlideOverPortrait === 'function'
@@ -2032,7 +1985,6 @@
         function toggleMic() {
             if (!localStream) return;
             if (myForceFlags && myForceFlags.muted) return;
-            if (typeof roomAdminState !== 'undefined' && roomAdminState && roomAdminState.kind === 'stage' && typeof canSpeakId === 'function' && !canSpeakId(persistentUserId)) return;
             const tracks = localStream.getAudioTracks();
             if (tracks.length > 0) {
                 const track = tracks[0];
@@ -2264,7 +2216,6 @@
             const willEnable = tracks.length === 0 || !tracks[0].enabled;
             if (willEnable) {
                 if (myForceFlags && myForceFlags.camOff) return;
-                if (typeof roomAdminState !== 'undefined' && roomAdminState && roomAdminState.kind === 'stage' && typeof canSpeakId === 'function' && !canSpeakId(persistentUserId)) return;
             }
 
             camToggleInProgress = true;
@@ -2589,7 +2540,6 @@
 
             if (!screenStream) {
                 if (myForceFlags && myForceFlags.shareOff) return;
-                if (typeof roomAdminState !== 'undefined' && roomAdminState && roomAdminState.kind === 'stage' && typeof canSpeakId === 'function' && !canSpeakId(persistentUserId)) return;
             }
 
             const btn = document.getElementById('btnShare');

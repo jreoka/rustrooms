@@ -31,7 +31,7 @@ For a production deployment, it is **highly recommended** to set the following e
 
 ### Decentralized P2P Distributed Mode
 
-Set the same `KEY` on every instance to form one logical RustRooms deployment without any centralized Redis instance or coordination server. Room/channel metadata, empty channels, presence and profile state, admin/stage/lobby state, moderation events, resume tokens, media toggles, and WebRTC signaling are synchronized across peers.
+Set the same `KEY` on every instance to form one logical RustRooms deployment without any centralized Redis instance or coordination server. Room/channel metadata, empty channels, presence and profile state, admin/lobby state, moderation events, resume tokens, media toggles, and WebRTC signaling are synchronized across peers.
 
 ```text
 # Automatic discovery via BitTorrent Mainline DHT + UDP NAT hole-punching + LAN broadcast

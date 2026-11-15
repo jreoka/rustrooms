@@ -1562,7 +1562,7 @@
                      }
                      if (currentAudioTrack) {
                          newTrack.enabled = currentAudioTrack.enabled;
-                     } else if (isDeafened || (myForceFlags && myForceFlags.muted) || (roomAdminState.kind === 'stage' && !canSpeakId(persistentUserId))) {
+                     } else if (isDeafened || (myForceFlags && myForceFlags.muted)) {
                          newTrack.enabled = false;
                      }
                       if (localStream) {
@@ -3175,7 +3175,6 @@
                 document.getElementById('sidebarToggle').classList.remove('hidden');
                 applySidebarState(true);
                 updatePageTitle();
-                updateStageBadge();
                 updateLobbyBadge();
             }, 300);
 
@@ -3453,13 +3452,12 @@
             }
         } catch (e) {}
 
-        // ---- Room admin, lobby, stage ----
+        // ---- Room admin, lobby ----
         // The server owns this state; admin-update messages replace it
         // wholesale and every render reads from here.
-        let roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, kind: 'regular', speakers: [], audience: [], forced: {} };
+        let roomAdminState = { creatorId: null, admins: [], banned: [], lobby: false, forced: {} };
         let myForceFlags = { muted: false, deafened: false, camOff: false, shareOff: false };
         let pendingKnocks = [];
-        let createRoomTypeChoice = 'regular';
 
         function getStoredResumeToken() {
             try { return sessionStorage.getItem('rustrooms_resume_' + roomId) || null; } catch (e) { return null; }
@@ -3477,17 +3475,9 @@
         function storeAdminKey(key) {
             try { localStorage.setItem('rustrooms_admin_' + roomId, key); } catch (e) {}
         }
-        function getCreateOpts() {
-            try { return JSON.parse(sessionStorage.getItem('rustrooms_create_opts') || 'null'); } catch (e) { return null; }
-        }
         function isAdminId(uid) { return !!uid && roomAdminState.admins.includes(uid); }
         function isCreatorId(uid) { return !!uid && roomAdminState.creatorId === uid; }
         function iAmAdmin() { return isAdminId(persistentUserId); }
-        function canSpeakId(uid) {
-            return roomAdminState.kind !== 'stage'
-                || roomAdminState.speakers.includes(uid)
-                || (isAdminId(uid) && !(roomAdminState.audience || []).includes(uid));
-        }
         function sendAdminAction(action, userId, extra) {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'admin-action', data: Object.assign({ action, userId }, extra || {}) }));
@@ -3514,32 +3504,13 @@
                 admins: data.admins || [],
                 banned: data.banned || [],
                 lobby: !!data.lobby,
-                kind: data.kind || 'regular',
-                speakers: data.speakers || [],
-                audience: data.audience || [],
                 forced: data.forced || {}
             };
-            applyStageRole();
+            applyControlLocks();
             updateLobbyBadge();
-            enforceAudienceAudio();
-            const sidebarActions = document.getElementById('sidebarActions');
-            if (sidebarActions) {
-                sidebarActions.style.display = (roomAdminState.kind === 'stage' && !iAmAdmin()) ? 'none' : '';
-            }
+            enforceForcedAudio();
             if (typeof updateRoomListUI === 'function') updateRoomListUI();
-            if (typeof reconcileStageTiles === 'function') reconcileStageTiles();
             renderKnocks();
-        }
-
-        function updateStageBadge() {
-            const badge = document.getElementById('stageBadge');
-            if (!badge) return;
-            if (roomAdminState.kind === 'stage') {
-                badge.style.display = '';
-                badge.textContent = canSpeakId(persistentUserId) ? 'Stage · On stage' : 'Stage · Audience';
-            } else {
-                badge.style.display = 'none';
-            }
         }
 
         function updateLobbyBadge() {
@@ -3588,17 +3559,6 @@
             showModNotice(targetState ? 'Lobby mode enabled' : 'Lobby mode disabled');
         }
 
-        function applyStageRole() {
-            if (roomAdminState.kind === 'stage' && !canSpeakId(persistentUserId)) {
-                if (micIsOn()) toggleMic();
-                if (camIsOn()) toggleCam();
-                if (screenStream) toggleScreen();
-            }
-            applyControlLocks();
-            updateStageBadge();
-            updateLobbyBadge();
-        }
-
         function applyForceStates() {
             if (myForceFlags.muted && micIsOn()) toggleMic();
             if (myForceFlags.deafened && !isDeafened) toggleDeafen();
@@ -3608,7 +3568,6 @@
         }
 
         function applyControlLocks() {
-            const stageLocked = roomAdminState.kind === 'stage' && !canSpeakId(persistentUserId);
             const lock = (id, locked, title) => {
                 const b = document.getElementById(id);
                 if (!b) return;
@@ -3617,10 +3576,10 @@
                 b.classList.toggle('ctrl-locked', !!locked);
                 b.title = locked ? title : b.dataset.origTitle;
             };
-            lock('btnMic', stageLocked || myForceFlags.muted || isDeafened, stageLocked ? "You're in the audience" : (isDeafened ? "You're deafened" : 'Muted by an admin'));
+            lock('btnMic', myForceFlags.muted || isDeafened, isDeafened ? "You're deafened" : 'Muted by an admin');
             lock('btnDeafen', myForceFlags.deafened, 'Deafened by an admin');
-            lock('btnCam', stageLocked || myForceFlags.camOff, stageLocked ? "You're in the audience" : 'Camera turned off by an admin');
-            lock('btnShare', stageLocked || myForceFlags.shareOff, stageLocked ? "You're in the audience" : 'Screen share turned off by an admin');
+            lock('btnCam', myForceFlags.camOff, 'Camera turned off by an admin');
+            lock('btnShare', myForceFlags.shareOff, 'Screen share turned off by an admin');
         }
 
         function applyModAction(data) {
@@ -3639,19 +3598,18 @@
             applyForceStates();
         }
 
-        // Peers must never hear a stage audience member, even if that
-        // member's client misbehaves: their audio element stays muted
-        // locally until they are moved onto the stage.
-        function enforceAudienceAudio() {
+        // Peers must never hear a server-muted member, even if that
+        // member's client misbehaves.
+        function enforceForcedAudio() {
             document.querySelectorAll('[id^="vid-"], [id^="aud-screen-"]').forEach(el => {
                 const uid = el.id.startsWith('vid-') ? el.id.slice(4) : el.id.slice(11);
                 if (!uid || uid === persistentUserId) return;
                 const forceMuted = !!(roomAdminState.forced[uid] && roomAdminState.forced[uid].muted);
-                if ((roomAdminState.kind === 'stage' && !canSpeakId(uid)) || forceMuted) {
-                    el.dataset.audienceMuted = '1';
+                if (forceMuted) {
+                    el.dataset.forceMuted = '1';
                     el.muted = true;
-                } else if (el.dataset.audienceMuted) {
-                    delete el.dataset.audienceMuted;
+                } else if (el.dataset.forceMuted) {
+                    delete el.dataset.forceMuted;
                     if (!isDeafened && el.dataset.userMuted !== '1') {
                         el.muted = false;
                     }
@@ -3779,55 +3737,4 @@
                 try { ws.close(); } catch (e) {}
             }
             backToSetupFromKnock();
-        }
-
-        // ---- Create-room menu (shown after Start Call, before setup) ----
-        function openCreateRoomMenu() {
-            selectCreateType(createRoomTypeChoice || 'regular');
-            const modal = document.getElementById('createRoomModal');
-            if (modal) modal.classList.add('open');
-        }
-        function closeCreateRoomMenu() {
-            animateModalClose('createRoomModal');
-            if (roomId && !getCreateOpts()) {
-                try {
-                    sessionStorage.setItem('rustrooms_create_opts', JSON.stringify({
-                        type: 'regular',
-                        lobby: false
-                    }));
-                } catch (e) {}
-                sessionStorage.setItem('rustrooms_welcomed', 'true');
-                if (typeof showOverlayAnimated === 'function' && typeof configOverlay !== 'undefined') {
-                    showOverlayAnimated(configOverlay);
-                    if (typeof initSetupButtonTouchHandlers === 'function') initSetupButtonTouchHandlers();
-                    if (typeof loadDevices === 'function') loadDevices();
-                }
-            }
-        }
-        function selectCreateType(type) {
-            createRoomTypeChoice = type;
-            const regular = document.getElementById('createTypeRegular');
-            const stage = document.getElementById('createTypeStage');
-            if (regular) regular.classList.toggle('selected', type === 'regular');
-            if (stage) stage.classList.toggle('selected', type === 'stage');
-        }
-        function confirmCreateRoom() {
-            const lobbyToggle = document.getElementById('createLobbyToggle');
-            try {
-                sessionStorage.setItem('rustrooms_create_opts', JSON.stringify({
-                    type: createRoomTypeChoice || 'regular',
-                    lobby: !!(lobbyToggle && lobbyToggle.checked)
-                }));
-            } catch (e) {}
-            animateModalClose('createRoomModal');
-            if (roomId) {
-                sessionStorage.setItem('rustrooms_welcomed', 'true');
-                if (typeof showOverlayAnimated === 'function' && typeof configOverlay !== 'undefined') {
-                    showOverlayAnimated(configOverlay);
-                    if (typeof initSetupButtonTouchHandlers === 'function') initSetupButtonTouchHandlers();
-                    if (typeof loadDevices === 'function') loadDevices();
-                }
-            } else {
-                createRoom();
-            }
         }

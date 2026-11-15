@@ -2190,8 +2190,8 @@ pub(crate) fn local_snapshot_stream(
         let times = state.channel_creation_times.lock().await.clone();
 
         // Collect room admin snapshots & pending lobby knocks so joining nodes
-        // immediately know stage/lobby settings, creator key hashes, admins,
-        // bans, speakers, and pending knocks without needing a central store.
+        // immediately know lobby settings, creator key hashes, admins,
+        // bans, and pending knocks without needing a central store.
         let (admin_snapshots, knock_snapshots) = {
             let admins_lock = state.admin_rooms.lock().await;
             let mut admin_snaps = Vec::new();
@@ -2513,7 +2513,7 @@ mod tests {
         let state_b = make_test_state(&cfg_b);
         let alice_id = Uuid::new_v4().to_string();
 
-        // Pre-populate state_a with a room, channel, user, and stage/lobby admin state.
+        // Pre-populate state_a with a room, channel, user, and lobby admin state.
         {
             let (tx, _rx) = tokio::sync::mpsc::channel(8);
             let status = crate::state::UserStatus {
@@ -2535,10 +2535,9 @@ mod tests {
         {
             let mut admins = state_a.admin_rooms.lock().await;
             let mut admin = crate::state::RoomAdmin::default();
-            admin.kind = crate::state::RoomKind::Stage;
             admin.lobby = true;
             admin.key_hash = Some("creator-hash-xyz".to_string());
-            admin.speakers.insert(alice_id.clone());
+            admin.admins.insert(alice_id.clone());
             admins.insert("alpha".to_string(), admin);
         }
 
@@ -2564,10 +2563,9 @@ mod tests {
                     admins
                         .get("alpha")
                         .map(|a| {
-                            a.kind == crate::state::RoomKind::Stage
-                                && a.lobby
+                            a.lobby
                                 && a.key_hash.as_deref() == Some("creator-hash-xyz")
-                                && a.speakers.contains(&alice_id)
+                                && a.admins.contains(&alice_id)
                         })
                         .unwrap_or(false)
                 };

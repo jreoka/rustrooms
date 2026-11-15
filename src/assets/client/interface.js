@@ -926,8 +926,6 @@
                 const icons = {
                     'promote': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`,
                     'demote': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="9" y1="12" x2="15" y2="12"></line></svg>`,
-                    'to-stage': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`,
-                    'to-audience': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
                     'mute': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>`,
                     'unmute': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>`,
                     'deafen': `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M3 18v-6a9 9 0 0 1 14.28-7.2"></path><path d="M21 12v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>`,
@@ -945,9 +943,6 @@
                     adminHtml = `<div class="uvm-admin-note">Room creator · Admin</div>`;
                 } else {
                     adminHtml += abtn(tAdmin ? 'demote' : 'promote', tAdmin ? 'Demote admin' : 'Make admin');
-                    if (roomAdminState.kind === 'stage' && !tAdmin) {
-                        adminHtml += canSpeakId(userId) ? abtn('to-audience', 'Move to audience') : abtn('to-stage', 'Move to stage');
-                    }
                     adminHtml += abtn(f.muted ? 'unmute' : 'mute', f.muted ? 'Remove server mute' : 'Server mute');
                     adminHtml += abtn(f.deafened ? 'undeafen' : 'deafen', f.deafened ? 'Remove deafen' : 'Server deafen');
                     adminHtml += abtn(f.camOff ? 'cam-on' : 'cam-off', f.camOff ? 'Allow camera' : 'Turn off camera');
@@ -1117,7 +1112,6 @@
 
                 const modalPairs = [
                     ['alertModal', closeCustomAlert],
-                    ['createRoomModal', closeCreateRoomMenu],
                     ['nameModal', closeNameModal],
                     ['passwordModal', closePasswordModal],
                     ['confirmModal', closeCustomConfirm],
@@ -1266,10 +1260,6 @@
         }
 
         async function createNewChannel() {
-            if (typeof roomAdminState !== 'undefined' && roomAdminState.kind === 'stage' && !iAmAdmin()) {
-                showCustomAlert("Admins only", "Only admins can create channels in a stage room.");
-                return;
-            }
             showNameModal("Create New Channel", "Enter channel name", (name) => {
                 if (!name) return;
                 if ([...name].length > 32) {
@@ -1474,10 +1464,8 @@
                 roomEl.ondragleave = (e) => handleRoomDragLeave(e);
                 roomEl.ondrop = (e) => handleRoomDrop(e, rid);
 
-                let stageRowsHtml = '';
-                let audienceRowsHtml = '';
+                let usersHtml = '';
                 const crownSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l4.6 6.2L21 5l-1.7 11H4.7L3 5l4.4 4.2z"/><rect x="4.7" y="18" width="14.6" height="2.2" rx="1"/></svg>`;
-                const earSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>`;
                 const users = roomInfo.users || {};
                 const userIds = Object.keys(users);
 
@@ -1504,7 +1492,7 @@
 
                     const safeUid = escapeHtml(uid);
                     const rowHtml = `
-                        <div class="room-user-row pointer-events-auto cursor-pointer ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? 'is-audience' : ''}" data-user-id="${safeUid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" onmouseenter="this.closest('.room-item').draggable=false" onmouseleave="this.closest('.room-item').draggable=true" ondragstart="handleUserDragStart(event, this.dataset.userId)" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchmove="handleUserTouchMove(event, this)" ontouchend="handleUserTouchEnd(event, this)" ontouchcancel="handleUserTouchCancel(event, this)">
+                        <div class="room-user-row pointer-events-auto cursor-pointer" data-user-id="${safeUid}" data-user-nickname="${escapeHtml(u.nickname)}" ${iAmAdmin() ? `draggable="true" onmouseenter="this.closest('.room-item').draggable=false" onmouseleave="this.closest('.room-item').draggable=true" ondragstart="handleUserDragStart(event, this.dataset.userId)" ondragend="handleUserDragEnd(event)"` : ''} onclick="handleUserClick(this)" oncontextmenu="handleUserContextMenu(event, this)" ontouchstart="handleUserTouchStart(event, this)" ontouchmove="handleUserTouchMove(event, this)" ontouchend="handleUserTouchEnd(event, this)" ontouchcancel="handleUserTouchCancel(event, this)">
                             <div class="user-avatar-wrap">
                                 <div class="mini-avatar">
                                     ${avatar ? (isGif && staticFrame ? `<img src="${escapeHtml(staticFrame)}" data-gif-src="${escapeHtml(avatar)}" data-static-src="${escapeHtml(staticFrame)}">` : `<img src="${escapeHtml(avatar)}">`) : `<div class="mini-avatar-placeholder">${escapeHtml(u.nickname.charAt(0).toUpperCase())}</div>`}
@@ -1512,7 +1500,6 @@
                             </div>
                             <span class="room-user-name">${escapeHtml(u.nickname)}</span>
                             ${isCreatorId(uid) ? `<span class="admin-crown creator" title="Room creator · Admin">${crownSvg}</span>` : isAdminId(uid) ? `<span class="admin-crown" title="Admin">${crownSvg}</span>` : ''}
-                            ${roomAdminState.kind === 'stage' && !canSpeakId(uid) ? `<span class="audience-badge" title="Audience · listening only">${earSvg}</span>` : ''}
                             ${u.isMobile ? `<span class="device-inline" title="Connected from a mobile device"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"></rect><line x1="11" y1="18" x2="13" y2="18"></line></svg></span>` : ''}
                             <div class="status-indicators">
                                 ${isScreenSharing ? `
@@ -1532,11 +1519,7 @@
                             </div>
                         </div>
                     `;
-                    if (roomAdminState.kind === 'stage' && !canSpeakId(uid)) {
-                        audienceRowsHtml += rowHtml;
-                    } else {
-                        stageRowsHtml += rowHtml;
-                    }
+                    usersHtml += rowHtml;
                 });
 
                 roomEl.innerHTML = `
@@ -1560,8 +1543,8 @@
                         </div>
                     </div>
                     <div class="room-users flex flex-col gap-1 mt-2" ondragover="handleChannelDragOver(event)" ondragleave="handleChannelDragLeave(event)" ondrop="handleUserDropOnChannel(event, this.closest('.room-item').dataset.rid)">
-                        ${roomAdminState.kind === 'stage' ? stageSectionsHtml(stageRowsHtml, audienceRowsHtml) : stageRowsHtml}
-                        ${userIds.length === 0 && roomAdminState.kind !== 'stage' ? '<span class="text-[10px] text-zinc-600 italic px-2">Empty</span>' : ''}
+                        ${usersHtml}
+                        ${userIds.length === 0 ? '<span class="text-[10px] text-zinc-600 italic px-2">Empty</span>' : ''}
                     </div>
                 `;
 
@@ -1597,12 +1580,6 @@
             const elUnder = document.elementFromPoint(clientX, clientY);
             if (!elUnder) return;
 
-            const stageGroup = elUnder.closest('.stage-group');
-            if (stageGroup) {
-                stageGroup.classList.add('drop-hover');
-                return;
-            }
-
             const roomItem = elUnder.closest('.room-item');
             if (roomItem) {
                 const targetRid = roomItem.dataset.rid;
@@ -1621,19 +1598,6 @@
             if (!elUnder) return;
 
             const sourceRid = (_userTouchState && _userTouchState.sourceRid) || getUserCurrentRoom(uid);
-
-            const stageGroup = elUnder.closest('.stage-group');
-            if (stageGroup) {
-                const targetRid = stageGroup.closest('.room-item')?.dataset.rid || channelId;
-                if (targetRid !== sourceRid) {
-                    moveUserToChannel(uid, targetRid);
-                } else if (stageGroup.dataset.drop === 'stage') {
-                    if (!canSpeakId(uid)) sendAdminAction('to-stage', uid);
-                } else if (canSpeakId(uid)) {
-                    sendAdminAction('to-audience', uid);
-                }
-                return;
-            }
 
             const roomItem = elUnder.closest('.room-item');
             if (roomItem) {
@@ -1716,36 +1680,6 @@
             });
         }
 
-        function handleStageDragOver(e) {
-            if (!draggedUserId) return;
-            e.preventDefault();
-            e.stopPropagation();
-            e.currentTarget.classList.add('drop-hover');
-        }
-
-        function handleStageDragLeave(e) {
-            e.currentTarget.classList.remove('drop-hover');
-        }
-
-        function handleUserDropOnStage(e, rid) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.currentTarget.classList.remove('drop-hover');
-            const uid = draggedUserId;
-            draggedUserId = null;
-            if (!uid) return;
-            const sourceRid = getUserCurrentRoom(uid);
-            if (rid !== sourceRid) {
-                moveUserToChannel(uid, rid);
-                return;
-            }
-            if (e.currentTarget.dataset.drop === 'stage') {
-                if (!canSpeakId(uid)) sendAdminAction('to-stage', uid);
-            } else if (canSpeakId(uid)) {
-                sendAdminAction('to-audience', uid);
-            }
-        }
-
         function handleChannelDragOver(e) {
             if (!draggedUserId) return;
             e.preventDefault();
@@ -1782,19 +1716,6 @@
                 return;
             }
             sendAdminAction('move', uid, { channelId: destChannel });
-        }
-
-        function stageSectionsHtml(stageRows, audienceRows) {
-            return `
-                <div class="stage-group pointer-events-auto" data-drop="stage" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, this.closest('.room-item').dataset.rid)">
-                    <div class="stage-group-label">On stage</div>
-                    ${stageRows || '<div class="stage-empty">Nobody is on the stage right now</div>'}
-                </div>
-                <div class="stage-divider"></div>
-                <div class="stage-group pointer-events-auto" data-drop="audience" ondragover="handleStageDragOver(event)" ondragleave="handleStageDragLeave(event)" ondrop="handleUserDropOnStage(event, this.closest('.room-item').dataset.rid)">
-                    <div class="stage-group-label">Listeners</div>
-                    ${audienceRows || '<div class="stage-empty">No listeners right now</div>'}
-                </div>`;
         }
 
         async function createRoom() {
@@ -1899,8 +1820,7 @@
 
             const inviteOverlay = document.getElementById('inviteWelcomeOverlay');
             const userList = document.getElementById('inviteUserList');
-            const stageList = document.getElementById('inviteStageList');
-            const hasInviteUsers = (userList && userList.children.length > 0) || (stageList && stageList.children.length > 0);
+            const hasInviteUsers = !!(userList && userList.children.length > 0);
 
             if (cameFromInviteOverlay || hasInviteUsers) {
                 sessionStorage.removeItem('rustrooms_welcomed');
@@ -1940,23 +1860,17 @@
                 
                 const uids = Object.keys(data.users);
                 if (uids.length === 0) {
-                    if (typeof getCreateOpts === 'function' && getCreateOpts()) {
-                        sessionStorage.setItem('rustrooms_welcomed', 'true');
-                        showOverlayAnimated(configOverlay);
-                        initSetupButtonTouchHandlers();
-                        loadDevices();
-                    } else if (typeof openCreateRoomMenu === 'function') {
-                        openCreateRoomMenu();
-                    }
+                    sessionStorage.setItem('rustrooms_welcomed', 'true');
+                    showOverlayAnimated(configOverlay);
+                    initSetupButtonTouchHandlers();
+                    loadDevices();
                     return;
                 }
                 
                 document.getElementById('inviteChannelName').innerText = `# ${data.name}`;
 
-                const isStage = data.kind === 'stage';
                 const isLobby = !!data.lobby;
-                document.getElementById('inviteKindBadge').innerText = isStage ? 'Live Stage' : 'Live Call';
-                document.getElementById('inviteStageNote').classList.toggle('hidden', !isStage);
+                document.getElementById('inviteKindBadge').innerText = 'Live Call';
                 const inviteLobbyBadge = document.getElementById('inviteLobbyBadge');
                 if (inviteLobbyBadge) {
                     inviteLobbyBadge.style.display = isLobby ? 'inline-flex' : 'none';
@@ -1965,7 +1879,7 @@
                 if (inviteLobbyNote) {
                     inviteLobbyNote.classList.toggle('hidden', !isLobby);
                 }
-                document.getElementById('inviteJoinLabel').innerText = isLobby ? 'Request to Join' : (isStage ? 'Join as Listener' : 'Join Conversation');
+                document.getElementById('inviteJoinLabel').innerText = isLobby ? 'Request to Join' : 'Join Conversation';
                 
                 const buildInviteUserCard = (u) => {
                     const userDiv = document.createElement('div');
@@ -1979,34 +1893,12 @@
                     return userDiv;
                 };
 
-                document.getElementById('inviteFlatBlock').classList.toggle('hidden', isStage);
-                document.getElementById('inviteStageBlock').classList.toggle('hidden', !isStage);
                 const userList = document.getElementById('inviteUserList');
-                const stageList = document.getElementById('inviteStageList');
-                const audienceList = document.getElementById('inviteAudienceList');
                 userList.innerHTML = '';
-                stageList.innerHTML = '';
-                audienceList.innerHTML = '';
-                const speakerSet = new Set(data.speakers || []);
-                let stageCount = 0;
-                let audienceCount = 0;
 
                 uids.forEach(uid => {
-                    const card = buildInviteUserCard(data.users[uid]);
-                    if (!isStage) {
-                        userList.appendChild(card);
-                    } else if (speakerSet.has(uid)) {
-                        stageList.appendChild(card);
-                        stageCount++;
-                    } else {
-                        audienceList.appendChild(card);
-                        audienceCount++;
-                    }
+                    userList.appendChild(buildInviteUserCard(data.users[uid]));
                 });
-                if (isStage) {
-                    document.getElementById('inviteStageEmpty').classList.toggle('hidden', stageCount > 0);
-                    document.getElementById('inviteAudienceEmpty').classList.toggle('hidden', audienceCount > 0);
-                }
                 
                 if (inviteDurationTimer) {
                     clearInterval(inviteDurationTimer);
@@ -2026,14 +1918,9 @@
                 
             } catch (e) {
                 console.error("Error fetching status", e);
-                // Fallback to setup screen or create modal if no create opts
-                if (typeof getCreateOpts === 'function' && getCreateOpts()) {
-                    showOverlayAnimated(configOverlay);
-                    initSetupButtonTouchHandlers();
-                    loadDevices();
-                } else if (typeof openCreateRoomMenu === 'function') {
-                    openCreateRoomMenu();
-                }
+                showOverlayAnimated(configOverlay);
+                initSetupButtonTouchHandlers();
+                loadDevices();
             }
         }
 

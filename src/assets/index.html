@@ -147,37 +147,6 @@
         </div>
     </div>
 
-    <div id="createRoomModal" class="modal-overlay">
-        <div class="modal-content create-room-content">
-            <h3 class="text-xl font-bold text-white">Create a room</h3>
-            <p class="create-room-sub">These settings apply because you're creating the room, and they last until the call fully ends.</p>
-            <div class="create-type-grid">
-                <button type="button" id="createTypeRegular" class="create-type-card selected" onclick="selectCreateType('regular')">
-                    <span class="create-type-title">Regular room</span>
-                    <span class="create-type-desc">Everyone can talk, use their camera and share their screen.</span>
-                </button>
-                <button type="button" id="createTypeStage" class="create-type-card" onclick="selectCreateType('stage')">
-                    <span class="create-type-title">Stage</span>
-                    <span class="create-type-desc">Admins and speakers talk. Everyone else is in the audience, listening only. Admins can move people on and off the stage.</span>
-                </button>
-            </div>
-            <div class="m3-row create-lobby-row">
-                <div class="flex flex-col">
-                    <span class="text-sm font-semibold text-white">Lobby mode</span>
-                    <span class="text-xs text-zinc-400">People who join knock first, and an admin lets them in</span>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
-                    <input type="checkbox" id="createLobbyToggle" class="sr-only peer">
-                    <div class="switch-track w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500 peer-checked:after:bg-white"></div>
-                </label>
-            </div>
-            <div class="flex gap-3">
-                <button onclick="closeCreateRoomMenu()" class="btn-secondary flex-1 py-3 rounded-xl font-medium transition-all">Cancel</button>
-                <button onclick="confirmCreateRoom()" class="btn-primary flex-1 py-3 rounded-xl font-medium transition-all">Continue</button>
-            </div>
-        </div>
-    </div>
-
     <div id="welcomeOverlay" class="fixed inset-0 z-[70] flex flex-col items-center justify-center p-4" style="display: none; background: var(--bg-primary);">
         <div class="text-center space-y-8 max-w-md w-full relative z-10" id="welcomeContent">
             <div class="space-y-4" id="welcomeTitleContainer">
@@ -189,7 +158,7 @@
             </div>
 
             <div id="startActionContainer" class="relative min-h-[72px] flex justify-center items-center">
-                 <button id="btnStartRoom" onclick="openCreateRoomMenu()" class="btn-primary absolute w-full md:w-auto px-12 py-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center">
+                 <button id="btnStartRoom" onclick="createRoom()" class="btn-primary absolute w-full md:w-auto px-12 py-4 rounded-lg font-semibold text-lg transition-all flex items-center justify-center">
                     Start Room
                 </button>
 
@@ -230,7 +199,6 @@
                 </div>
                 <h1 id="inviteChannelName" class="text-3xl md:text-4xl font-bold tracking-tight text-white break-words"># General</h1>
                 <p id="inviteCallDuration" class="text-zinc-400 text-sm font-medium">Running for 00:00:00</p>
-                <p id="inviteStageNote" class="hidden text-sm" style="color: var(--text-secondary); line-height: 1.625;">This is a <span class="font-semibold" style="color: var(--text-primary);">stage room</span>, not a regular call. You'll join as a listener — an admin can bring you on stage when it's your turn to speak.</p>
                 <p id="inviteLobbyNote" class="hidden text-sm" style="color: var(--text-secondary); line-height: 1.625;">This room has a <span class="font-semibold" style="color: var(--text-primary);">lobby</span> — an admin will approve your request to let you in.</p>
             </div>
 
@@ -238,19 +206,6 @@
                 <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest text-left">Currently in call</h3>
                 <div id="inviteUserList" class="flex flex-wrap justify-center gap-3 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
                     <!-- Users will be injected here -->
-                </div>
-            </div>
-
-            <div id="inviteStageBlock" class="space-y-4 hidden">
-                <div class="space-y-3">
-                    <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest text-left">On stage</h3>
-                    <div id="inviteStageList" class="flex flex-wrap justify-center gap-3 overflow-y-auto pr-2 custom-scrollbar" style="max-height: 160px;"></div>
-                    <p id="inviteStageEmpty" class="hidden text-sm" style="color: var(--text-muted);">Nobody is on the stage right now</p>
-                </div>
-                <div class="space-y-3">
-                    <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-widest text-left">Listeners</h3>
-                    <div id="inviteAudienceList" class="flex flex-wrap justify-center gap-3 overflow-y-auto pr-2 custom-scrollbar" style="max-height: 160px;"></div>
-                    <p id="inviteAudienceEmpty" class="hidden text-sm" style="color: var(--text-muted);">No listeners right now</p>
                 </div>
             </div>
 
@@ -493,7 +448,6 @@
                     <span id="sidebarKnockBadge" class="sidebar-knock-badge" style="display: none;">0</span>
                 </button>
                 <div id="currentChannelName" class="text-white font-semibold text-lg md:text-xl truncate min-w-0 drop-shadow-md"></div>
-                <span id="stageBadge" class="stage-badge" style="display: none;"></span>
                 <span id="lobbyBadge" class="lobby-badge" style="display: none;"></span>
             </div>
 

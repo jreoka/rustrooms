@@ -92,7 +92,7 @@ async fn main() {
     };
 
     // Restore persisted admin state (creator keys, admins, bans,
-    // lobby/stage config) so restarts and rollouts don't strip it.
+    // lobby config) so restarts and rollouts don't strip it.
     // Restored rooms start empty, so arm the normal expiry cleanup:
     // if nobody rejoins within the grace period the entry is deleted
     // exactly as if the server had never stopped.

@@ -64,10 +64,6 @@ fn resolve_join_user_id(raw_user_id: String, ctx: &JoinIdentityContext) -> Strin
     })
 }
 
-fn can_create_stage_channel(key_ok: bool, identity_proven: bool, is_admin: bool) -> bool {
-    key_ok || (identity_proven && is_admin)
-}
-
 
 // Marks a dropped participant's seat as held and returns the
 // departure generation, or None if this connection is not the live
@@ -543,19 +539,6 @@ pub(crate) async fn handle_socket(
                                 .and_then(|v| v.as_str())
                                 .filter(|k| k.len() <= 256)
                                 .map(|k| k.to_string());
-                            let want_lobby = parsed
-                                .data
-                                .as_ref()
-                                .and_then(|d| d.get("lobby"))
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let want_kind = parsed
-                                .data
-                                .as_ref()
-                                .and_then(|d| d.get("roomType"))
-                                .and_then(|v| v.as_str())
-                                .map(RoomKind::from_str)
-                                .unwrap_or_default();
 
                             if avatar.is_none() {
                                 is_gif = false;
@@ -630,7 +613,6 @@ pub(crate) async fn handle_socket(
                                     occupied_remote_room_ids,
                                     remote_in_target_channel,
                                     remote_room_has_users,
-                                    remote_channel_preexists,
                                 ) = {
                                     let rl = remote_users.lock().await;
                                     if let Some(room) = rl.get(&room_id) {
@@ -642,17 +624,15 @@ pub(crate) async fn handle_socket(
                                             .get(&channel_id)
                                             .is_some_and(|ch| ch.contains_key(&user_id));
                                         let has_users = room.values().any(|ch| !ch.is_empty());
-                                        let ch_exists = room.contains_key(&channel_id);
-                                        (all_ids, in_target, has_users, ch_exists)
+                                        (all_ids, in_target, has_users)
                                     } else {
-                                        (HashSet::new(), false, false, false)
+                                        (HashSet::new(), false, false)
                                     }
                                 };
                                 let (
                                     occupied_local_room_ids,
                                     seat_active_local,
                                     local_room_has_users,
-                                    local_channel_preexists,
                                 ) = {
                                     let rl = rooms.lock().await;
                                     if let Some(room) = rl.get(&room_id) {
@@ -664,22 +644,12 @@ pub(crate) async fn handle_socket(
                                             .get(&channel_id)
                                             .is_some_and(|ch| ch.contains_key(&user_id));
                                         let has_users = room.values().any(|ch| !ch.is_empty());
-                                        let ch_exists = room.contains_key(&channel_id);
-                                        (all_ids, active_target, has_users, ch_exists)
+                                        (all_ids, active_target, has_users)
                                     } else {
-                                        (HashSet::new(), false, false, false)
+                                        (HashSet::new(), false, false)
                                     }
                                 };
                                 let room_preexisting = local_room_has_users || remote_room_has_users;
-                                let timed_channel_preexists = state
-                                    .channel_creation_times
-                                    .lock()
-                                    .await
-                                    .get(&room_id)
-                                    .is_some_and(|t| t.contains_key(&channel_id));
-                                let channel_preexists = local_channel_preexists
-                                    || timed_channel_preexists
-                                    || remote_channel_preexists;
 
                                 let (away_seat_room_ids, seat_held, seat_held_other_channel) = {
                                     let lock = state.away_seats.lock().await;
@@ -718,9 +688,7 @@ pub(crate) async fn handle_socket(
                                 let (
                                     key_ok_room,
                                     raw_user_banned,
-                                    raw_user_is_admin,
                                     raw_user_approved,
-                                    is_stage_room,
                                     protected_admin_ids,
                                     approved_ids,
                                 ) = {
@@ -757,16 +725,12 @@ pub(crate) async fn handle_socket(
                                         (
                                             key_ok,
                                             a.banned.contains(&user_id),
-                                            a.is_admin(&user_id),
                                             a.approved.contains(&user_id),
-                                            a.kind == RoomKind::Stage,
                                             protected,
                                             a.approved.clone(),
                                         )
                                     } else {
                                         (
-                                            false,
-                                            false,
                                             false,
                                             false,
                                             false,
@@ -787,26 +751,6 @@ pub(crate) async fn handle_socket(
                                 }
 
                                 let identity_proven = room_resume_ok || key_ok_room;
-
-                                // In a stage room only authenticated admins may create
-                                // new channels. Checked before channel creation.
-                                if !channel_preexists
-                                    && channel_id != "General"
-                                    && is_stage_room
-                                    && !can_create_stage_channel(
-                                        key_ok_room,
-                                        identity_proven,
-                                        raw_user_is_admin,
-                                    )
-                                {
-                                    let error_msg = crate::admin::error_text(
-                                        "STAGE_CHANNEL_ADMIN_ONLY",
-                                        "Only admins can create channels in a stage room.",
-                                    );
-                                    let _ = tx.send(Ok(Message::Text(error_msg.into()))).await;
-                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                    return;
-                                }
 
                                 if seat_held_other_channel && identity_proven {
                                     finalize_held_seat(&state, &room_id, &user_id, None, true)
@@ -855,8 +799,6 @@ pub(crate) async fn handle_socket(
                                         ));
                                         admin_state.creator_id = Some(user_id.clone());
                                         admin_state.admins.insert(user_id.clone());
-                                        admin_state.lobby = want_lobby;
-                                        admin_state.kind = want_kind;
                                         issued_admin_key = Some(key);
                                         admin_state_changed = true;
                                     }
@@ -966,15 +908,6 @@ pub(crate) async fn handle_socket(
                                         let mut status = joined_status.clone();
                                         let admins_lock = state.admin_rooms.lock().await;
                                         if let Some(a) = admins_lock.get(&room_id) {
-                                            if a.kind == RoomKind::Stage && !a.can_speak(&user_id) {
-                                                status.is_muted = true;
-                                                status.is_screen_sharing = false;
-                                                cam_enabled = false;
-                                                cam_video_track_id = None;
-                                                screen_has_audio = false;
-                                                screen_video_track_id = None;
-                                                screen_audio_track_id = None;
-                                            }
                                             if let Some(f) = a.forced.get(&user_id) {
                                                 if f.muted {
                                                     status.is_muted = true;
@@ -1296,17 +1229,11 @@ pub(crate) async fn handle_socket(
                                 last_profile_image_update = Some(now);
                             }
 
-                            let (stage_mute_clamp, forced_flags) = {
+                            let forced_flags = {
                                 let admins_lock = state.admin_rooms.lock().await;
                                 admins_lock
                                     .get(&room_id)
-                                    .map(|a| {
-                                        (
-                                            a.kind == RoomKind::Stage && !a.can_speak(&user_id),
-                                            a.forced.get(&user_id).copied(),
-                                        )
-                                    })
-                                    .unwrap_or((false, None))
+                                    .and_then(|a| a.forced.get(&user_id).copied())
                             };
 
                             let mut full_status = None;
@@ -1391,10 +1318,6 @@ pub(crate) async fn handle_socket(
                                             }
                                             status.profile_rev = data_rev.max(status.profile_rev);
                                         }
-                                        if stage_mute_clamp {
-                                            status.is_muted = true;
-                                            status.is_screen_sharing = false;
-                                        }
                                         if let Some(f) = forced_flags {
                                             if f.muted {
                                                 status.is_muted = true;
@@ -1461,8 +1384,7 @@ pub(crate) async fn handle_socket(
                                 .await;
                             }
                         } else if parsed.msg_type == "cam-toggle" {
-                            // Stage audience and force-camera-off users may
-                            // turn their camera off but never on.
+                            // Force-camera-off users may turn their camera off but never on.
                             let enabling = parsed
                                 .data
                                 .as_ref()
@@ -1473,13 +1395,8 @@ pub(crate) async fn handle_socket(
                                 let admins_lock = state.admin_rooms.lock().await;
                                 admins_lock
                                     .get(&room_id)
-                                    .map(|a| {
-                                        (a.kind == RoomKind::Stage && !a.can_speak(&user_id))
-                                            || a.forced
-                                                .get(&user_id)
-                                                .map(|f| f.cam_off)
-                                                .unwrap_or(false)
-                                    })
+                                    .and_then(|a| a.forced.get(&user_id))
+                                    .map(|f| f.cam_off)
                                     .unwrap_or(false)
                             } else {
                                 false
@@ -1533,13 +1450,8 @@ pub(crate) async fn handle_socket(
                                 let admins_lock = state.admin_rooms.lock().await;
                                 admins_lock
                                     .get(&room_id)
-                                    .map(|a| {
-                                        (a.kind == RoomKind::Stage && !a.can_speak(&user_id))
-                                            || a.forced
-                                                .get(&user_id)
-                                                .map(|f| f.share_off)
-                                                .unwrap_or(false)
-                                    })
+                                    .and_then(|a| a.forced.get(&user_id))
+                                    .map(|f| f.share_off)
                                     .unwrap_or(false)
                             } else {
                                 false
@@ -1888,10 +1800,9 @@ pub(crate) async fn handle_socket(
                             let Some(target) = target else { continue };
 
                             match action.as_str() {
-                                "promote" | "demote" | "to-stage" | "to-audience" => {
+                                "promote" | "demote" => {
                                     let mut refusal: Option<(&str, &str)> = None;
                                     let mut changed = false;
-                                    let mut lost_stage_voice = false;
                                     {
                                         let mut lock = state.admin_rooms.lock().await;
                                         if let Some(a) = lock.get_mut(&room_id) {
@@ -1908,46 +1819,7 @@ pub(crate) async fn handle_socket(
                                                             "The room creator cannot be demoted.",
                                                         ));
                                                     } else {
-                                                        let demoted =
-                                                            a.admins.remove(&target);
-                                                        let unparked =
-                                                            a.audience.remove(&target);
-                                                        changed = demoted || unparked;
-                                                        lost_stage_voice = a.kind == RoomKind::Stage
-                                                            && !a.can_speak(&target);
-                                                    }
-                                                }
-                                                "to-stage" => {
-                                                    let unparked =
-                                                        a.audience.remove(&target);
-                                                    let added =
-                                                        a.speakers.insert(target.clone());
-                                                    changed = unparked || added;
-                                                }
-                                                "to-audience" => {
-                                                    if target != user_id
-                                                        && a.creator_id.as_deref()
-                                                            == Some(target.as_str())
-                                                    {
-                                                        refusal = Some((
-                                                            "CANNOT_DEMOTE_CREATOR",
-                                                            "The room creator cannot be moved to the audience.",
-                                                        ));
-                                                    } else {
-                                                        let unseated = a.speakers.remove(&target);
-                                                        // Admins hold a stage seat by
-                                                        // default; park them in the
-                                                        // audience set to revoke the
-                                                        // seat (their powers stay).
-                                                        let parked = if a.is_admin(&target) {
-                                                            a.audience.insert(target.clone())
-                                                        } else {
-                                                            a.audience.remove(&target)
-                                                        };
-                                                        changed = unseated || parked;
-                                                        lost_stage_voice = a.kind
-                                                            == RoomKind::Stage
-                                                            && !a.can_speak(&target);
+                                                        changed = a.admins.remove(&target);
                                                     }
                                                 }
                                                 _ => {}
@@ -1964,96 +1836,6 @@ pub(crate) async fn handle_socket(
                                     if changed {
                                         crate::admin::broadcast_admin_update(&state, &room_id)
                                             .await;
-                                    }
-                                    if lost_stage_voice {
-                                        // Silence the demoted user's stored
-                                        // status immediately; their client
-                                        // also self-mutes on admin-update.
-                                        let mut updated_status = None;
-                                        let mut target_channel = None;
-                                        {
-                                            let mut rooms_lock = rooms.lock().await;
-                                            if let Some(room) = rooms_lock.get_mut(&room_id) {
-                                                for (ch, channel) in room.iter_mut() {
-                                                    if let Some((_, status)) =
-                                                        channel.get_mut(&target)
-                                                    {
-                                                        status.is_muted = true;
-                                                        status.is_screen_sharing = false;
-                                                        updated_status =
-                                                            Some(status.clone());
-                                                        target_channel = Some(ch.clone());
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            if let (Some(status), Some(tch)) =
-                                                (&updated_status, &target_channel)
-                                            {
-                                                let notify_msg =
-                                                    serde_json::to_string(&SignalMessage {
-                                                        msg_type: "user-update".into(),
-                                                        user_id: Some(target.clone()),
-                                                        target: None,
-                                                        data: Some(
-                                                            serde_json::to_value(status)
-                                                                .unwrap(),
-                                                        ),
-                                                    })
-                                                    .unwrap();
-                                                if let Some(room) = rooms_lock.get(&room_id)
-                                                    && let Some(channel) = room.get(tch)
-                                                {
-                                                    for (_, (tx, _)) in channel.iter() {
-                                                        let _ = tx.try_send(Ok(
-                                                            Message::Text(
-                                                                notify_msg.clone().into(),
-                                                            ),
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if updated_status.is_none() {
-                                            let mut rl = remote_users.lock().await;
-                                            if let Some(room) = rl.get_mut(&room_id) {
-                                                for (ch, channel) in room.iter_mut() {
-                                                    if let Some(status) = channel.get_mut(&target)
-                                                    {
-                                                        status.is_muted = true;
-                                                        status.is_screen_sharing = false;
-                                                        updated_status = Some(status.clone());
-                                                        target_channel = Some(ch.clone());
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let (Some(status), Some(tch)) =
-                                            (updated_status, target_channel)
-                                        {
-                                            distributed_broadcast(
-                                                &state,
-                                                &DistributedMessage {
-                                                    msg_type: "user-update".into(),
-                                                    room_id: room_id.clone(),
-                                                    channel_id: tch,
-                                                    user_id: target.clone(),
-                                                    msg_id: Uuid::new_v4().to_string(),
-                                                    status: Some(status),
-                                                    data: None,
-                                                    signal_msg: None,
-                                                },
-                                            )
-                                            .await;
-                                            broadcast_channel_list(
-                                                &rooms,
-                                                &remote_users,
-                                                &state.channel_creation_times,
-                                                &room_id,
-                                            )
-                                            .await;
-                                        }
                                     }
                                 }
                                 "mute" | "unmute" | "deafen" | "undeafen" | "cam-off"
@@ -2293,8 +2075,6 @@ pub(crate) async fn handle_socket(
                                         if let Some(a) = lock.get_mut(&room_id) {
                                             a.banned.insert(target.clone());
                                             a.admins.remove(&target);
-                                            a.speakers.remove(&target);
-                                            a.audience.remove(&target);
                                             a.forced.remove(&target);
                                             a.approved.remove(&target);
                                             pending_knock_tx = a.pending.remove(&target).map(|p| p.tx);
@@ -2565,19 +2345,6 @@ pub(crate) async fn handle_socket(
                                 _ => {}
                             }
                         } else if parsed.msg_type == "rename-channel" {
-                            let stage_blocked = {
-                                let lock = state.admin_rooms.lock().await;
-                                lock.get(&room_id)
-                                    .is_some_and(|a| a.kind == RoomKind::Stage && !a.is_admin(&user_id))
-                            };
-                            if stage_blocked {
-                                let error_msg = crate::admin::error_text(
-                                    "NOT_ADMIN",
-                                    "Only admins can rename channels in a stage room.",
-                                );
-                                let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
-                                continue;
-                            }
                             let Some(target_channel_id) = parsed
                                 .data
                                 .as_ref()
@@ -2734,19 +2501,6 @@ pub(crate) async fn handle_socket(
                                 }
                             }
                         } else if parsed.msg_type == "delete-channel" {
-                            let stage_blocked = {
-                                let lock = state.admin_rooms.lock().await;
-                                lock.get(&room_id)
-                                    .is_some_and(|a| a.kind == RoomKind::Stage && !a.is_admin(&user_id))
-                            };
-                            if stage_blocked {
-                                let error_msg = crate::admin::error_text(
-                                    "NOT_ADMIN",
-                                    "Only admins can delete channels in a stage room.",
-                                );
-                                let _ = tx.try_send(Ok(Message::Text(error_msg.into())));
-                                continue;
-                            }
                             let Some(target_channel_id) = parsed
                                 .data
                                 .as_ref()
@@ -3097,33 +2851,15 @@ pub(crate) async fn channel_status(
     drop(remote_lock);
     drop(rooms_lock);
 
-    // The room kind lives in the admin state (synchronized across P2P nodes
-    // via snapshots and live admin-update messages).
-    let (kind, speakers, lobby) = {
+    let lobby = {
         let lock = state.admin_rooms.lock().await;
-        match lock.get(&room_id) {
-            Some(admin) => {
-                let speakers = if admin.kind == RoomKind::Stage {
-                    users_map
-                        .keys()
-                        .filter(|uid| admin.can_speak(uid))
-                        .cloned()
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                (admin.kind.as_str().to_string(), speakers, admin.lobby)
-            }
-            None => ("regular".to_string(), Vec::new(), false),
-        }
+        lock.get(&room_id).is_some_and(|admin| admin.lobby)
     };
 
     axum::Json(RoomStatus {
         name: channel_id,
         users: users_map,
         created_at,
-        kind,
-        speakers,
         lobby,
     })
     .into_response()
@@ -3251,13 +2987,5 @@ mod tests {
             resolve_join_user_id("offline_admin".to_string(), &proven_ctx),
             "offline_admin"
         );
-    }
-
-    #[test]
-    fn stage_channel_creation_requires_proven_admin_or_creator_key() {
-        assert!(!can_create_stage_channel(false, false, true));
-        assert!(!can_create_stage_channel(false, true, false));
-        assert!(can_create_stage_channel(false, true, true));
-        assert!(can_create_stage_channel(true, false, false));
     }
 }

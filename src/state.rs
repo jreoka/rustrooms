@@ -33,14 +33,6 @@ pub(crate) struct RoomStatus {
     pub(crate) users: HashMap<String, UserStatus>,
     #[serde(default)]
     pub created_at: u64,
-    /// "regular" or "stage" — lets the guest landing page label the room
-    /// correctly before anyone joins.
-    #[serde(default)]
-    pub kind: String,
-    /// Stage rooms only: ids of the present users who hold a stage seat,
-    /// so the landing page can split "On stage" from "Listeners".
-    #[serde(default)]
-    pub speakers: Vec<String>,
     /// Whether lobby mode is enabled for this room.
     #[serde(default)]
     pub lobby: bool,
@@ -93,31 +85,6 @@ pub(crate) const MAX_DISTRIBUTED_DATA_LEN: usize = 3 * 1024 * 1024;
 pub(crate) const PROFILE_IMAGE_UPDATE_COOLDOWN_SECS: u64 = 5;
 pub(crate) const JOIN_TIMEOUT_SECS: u64 = 30;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum RoomKind {
-    #[default]
-    Regular,
-    Stage,
-}
-
-impl RoomKind {
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            RoomKind::Regular => "regular",
-            RoomKind::Stage => "stage",
-        }
-    }
-
-    pub(crate) fn from_str(value: &str) -> RoomKind {
-        if value.eq_ignore_ascii_case("stage") {
-            RoomKind::Stage
-        } else {
-            RoomKind::Regular
-        }
-    }
-}
-
 // Moderation state an admin has imposed on one user. Enforced by the
 // server where it can (status clamps, toggle drops) and by the target's
 // client for device-level effects (mic/cam/share stop).
@@ -147,7 +114,7 @@ pub(crate) struct PendingKnock {
 // Per-room admin/moderation state, keyed by room id in AppState. Lives
 // exactly as long as the room: every room-removal path also removes
 // this entry, which is what invalidates the creator key, the ban list
-// and the lobby/stage configuration when the call fully expires.
+// and the lobby configuration when the call fully expires.
 #[derive(Default)]
 pub(crate) struct RoomAdmin {
     // HMAC of the creator key under the server boot secret. The key
@@ -157,13 +124,6 @@ pub(crate) struct RoomAdmin {
     pub admins: HashSet<String>,
     pub banned: HashSet<String>,
     pub lobby: bool,
-    pub kind: RoomKind,
-    // Stage rooms: non-admin users allowed to speak/present.
-    pub speakers: HashSet<String>,
-    // Stage rooms: admins parked in the audience. Admins normally
-    // hold a stage seat by virtue of being admins; membership here
-    // revokes that seat (not their powers) until they are moved back.
-    pub audience: HashSet<String>,
     pub forced: HashMap<String, ForceFlags>,
     // Lobby: connections parked before join, and one-shot approvals.
     pub pending: HashMap<String, PendingKnock>,
@@ -177,12 +137,6 @@ impl RoomAdmin {
         self.admins.contains(user_id)
     }
 
-    pub(crate) fn can_speak(&self, user_id: &str) -> bool {
-        self.kind == RoomKind::Regular
-            || self.speakers.contains(user_id)
-            || (self.admins.contains(user_id) && !self.audience.contains(user_id))
-    }
-
     // The role state shared with every client (and, in distributed
     // mode, with the other nodes). Never includes the key hash, the
     // pending knock connections, or approvals.
@@ -192,9 +146,6 @@ impl RoomAdmin {
             "admins": self.admins.iter().collect::<Vec<_>>(),
             "banned": self.banned.iter().collect::<Vec<_>>(),
             "lobby": self.lobby,
-            "kind": self.kind.as_str(),
-            "speakers": self.speakers.iter().collect::<Vec<_>>(),
-            "audience": self.audience.iter().collect::<Vec<_>>(),
             "forced": self.forced,
         })
     }
@@ -227,13 +178,8 @@ impl RoomAdmin {
         };
         self.admins = read_set("admins");
         self.banned = read_set("banned");
-        self.speakers = read_set("speakers");
-        self.audience = read_set("audience");
         if let Some(lobby) = data.get("lobby").and_then(|v| v.as_bool()) {
             self.lobby = lobby;
-        }
-        if let Some(kind) = data.get("kind").and_then(|v| v.as_str()) {
-            self.kind = RoomKind::from_str(kind);
         }
         if let Some(forced) = data.get("forced") {
             self.forced = serde_json::from_value(forced.clone()).unwrap_or_default();
@@ -244,7 +190,7 @@ impl RoomAdmin {
 pub(crate) type AdminMap = Arc<Mutex<HashMap<String, RoomAdmin>>>;
 
 // On-disk form of the admin state, written by admin::persist_state so
-// room creators, promoted admins, bans, lobby/stage configuration and
+// room creators, promoted admins, bans, lobby configuration and
 // force states survive server restarts and version rollouts. The
 // signing secret is stored alongside (file is 0600): without it the
 // stored key hashes could never verify after a restart. Entries are
@@ -257,11 +203,6 @@ pub(crate) struct PersistedRoomAdmin {
     pub admins: HashSet<String>,
     pub banned: HashSet<String>,
     pub lobby: bool,
-    pub kind: RoomKind,
-    pub speakers: HashSet<String>,
-    // Absent in state files written before audience parking existed.
-    #[serde(default)]
-    pub audience: HashSet<String>,
     pub forced: HashMap<String, ForceFlags>,
 }
 
@@ -306,9 +247,6 @@ impl RoomAdmin {
             admins: self.admins.clone(),
             banned: self.banned.clone(),
             lobby: self.lobby,
-            kind: self.kind,
-            speakers: self.speakers.clone(),
-            audience: self.audience.clone(),
             forced: self.forced.clone(),
         }
     }
@@ -320,7 +258,6 @@ impl RoomAdmin {
             || !self.admins.is_empty()
             || !self.banned.is_empty()
             || self.lobby
-            || self.kind == RoomKind::Stage
     }
 }
 
@@ -332,9 +269,6 @@ impl From<PersistedRoomAdmin> for RoomAdmin {
             admins: p.admins,
             banned: p.banned,
             lobby: p.lobby,
-            kind: p.kind,
-            speakers: p.speakers,
-            audience: p.audience,
             forced: p.forced,
             pending: HashMap::new(),
             remote_pending: HashMap::new(),

@@ -581,8 +581,6 @@ async fn apply_distributed_message(
                     let a = lock.entry(msg.room_id.clone()).or_default();
                     a.banned.insert(msg.user_id.clone());
                     a.admins.remove(&msg.user_id);
-                    a.speakers.remove(&msg.user_id);
-                    a.audience.remove(&msg.user_id);
                     a.forced.remove(&msg.user_id);
                     a.approved.remove(&msg.user_id);
                     let mut removed_remote = false;
@@ -1201,8 +1199,6 @@ pub(crate) async fn broadcast_channel_list(
                     name: cid.clone(),
                     users: HashMap::new(),
                     created_at: *created_at,
-                    kind: String::new(),
-                    speakers: Vec::new(),
                     lobby: false,
                 },
             );
@@ -1226,8 +1222,6 @@ pub(crate) async fn broadcast_channel_list(
                     name: cid.clone(),
                     users: user_map,
                     created_at,
-                    kind: String::new(),
-                    speakers: Vec::new(),
                     lobby: false,
                 },
             );
@@ -1247,8 +1241,6 @@ pub(crate) async fn broadcast_channel_list(
                     name: cid.clone(),
                     users: HashMap::new(),
                     created_at,
-                    kind: String::new(),
-                    speakers: Vec::new(),
                     lobby: false,
                 });
             for (user_id, status) in users.iter() {
@@ -2012,9 +2004,6 @@ departure_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             "admins": [],
             "banned": [],
             "lobby": false,
-            "kind": "regular",
-            "speakers": [],
-            "audience": [],
             "forced": {}
         }));
 
